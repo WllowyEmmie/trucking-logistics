@@ -21,6 +21,10 @@ func (s *Server) Routes() http.Handler {
 		trucks.Get("/", s.listTrucks)
 		trucks.Post("/", s.createTruck)
 	})
+	router.Route("/drivers", func(drivers chi.Router) {
+		drivers.Get("/", s.listDriver)
+		drivers.Post("/", s.createDriver)
+	})
 
 	return router
 }
