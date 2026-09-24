@@ -1,0 +1,17 @@
+-- name: CreateDelivery :one
+INSERT INTO deliveries (tracking_token, customer_name, customer_phone, goods_desc)
+VALUES (@tracking_token, @customer_name, @customer_phone, @goods_desc)
+RETURNING id, reference, tracking_token, customer_name, customer_phone, goods_desc, status, created_at;
+
+-- name: CreateDeliveryStop :one
+INSERT INTO delivery_stops (delivery_id, sequence, stop_type, address, position, contact_name, contact_phone)
+VALUES (
+    @delivery_id, @sequence, @stop_type, @address,
+    ST_SetSRID(ST_MakePoint(@lng::float8, @lat::float8), 4326)::geography,
+    @contact_name, @contact_phone
+)
+RETURNING id, sequence, stop_type, address, status;
+
+-- name: CreateDeliveryEvent :exec
+INSERT INTO delivery_events (delivery_id, stop_id, event_type, note)
+VALUES (@delivery_id, @stop_id, @event_type, @note);
