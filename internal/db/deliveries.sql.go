@@ -12,6 +12,39 @@ import (
 	"github.com/google/uuid"
 )
 
+const assignTruck = `-- name: AssignTruck :one
+UPDATE deliveries
+SET truck_id = $1,
+    status = 'assigned',
+    updated_at = now()
+WHERE id = $2
+RETURNING id, reference, status, truck_id
+`
+
+type AssignTruckParams struct {
+	TruckID *uuid.UUID `json:"truck_id"`
+	ID      uuid.UUID  `json:"id"`
+}
+
+type AssignTruckRow struct {
+	ID        uuid.UUID  `json:"id"`
+	Reference string     `json:"reference"`
+	Status    string     `json:"status"`
+	TruckID   *uuid.UUID `json:"truck_id"`
+}
+
+func (q *Queries) AssignTruck(ctx context.Context, arg AssignTruckParams) (AssignTruckRow, error) {
+	row := q.db.QueryRow(ctx, assignTruck, arg.TruckID, arg.ID)
+	var i AssignTruckRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reference,
+		&i.Status,
+		&i.TruckID,
+	)
+	return i, err
+}
+
 const createDelivery = `-- name: CreateDelivery :one
 INSERT INTO deliveries (tracking_token, customer_name, customer_phone, goods_desc)
 VALUES ($1, $2, $3, $4)
@@ -126,6 +159,35 @@ func (q *Queries) CreateDeliveryStop(ctx context.Context, arg CreateDeliveryStop
 		&i.StopType,
 		&i.Address,
 		&i.Status,
+	)
+	return i, err
+}
+
+const getDelivery = `-- name: GetDelivery :one
+SELECT id, reference, tracking_token, customer_name, status, truck_id
+FROM deliveries
+WHERE id = $1
+`
+
+type GetDeliveryRow struct {
+	ID            uuid.UUID  `json:"id"`
+	Reference     string     `json:"reference"`
+	TrackingToken string     `json:"tracking_token"`
+	CustomerName  string     `json:"customer_name"`
+	Status        string     `json:"status"`
+	TruckID       *uuid.UUID `json:"truck_id"`
+}
+
+func (q *Queries) GetDelivery(ctx context.Context, id uuid.UUID) (GetDeliveryRow, error) {
+	row := q.db.QueryRow(ctx, getDelivery, id)
+	var i GetDeliveryRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reference,
+		&i.TrackingToken,
+		&i.CustomerName,
+		&i.Status,
+		&i.TruckID,
 	)
 	return i, err
 }

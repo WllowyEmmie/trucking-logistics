@@ -27,6 +27,7 @@ func (s *Server) Routes() http.Handler {
 	})
 	router.Route("/deliveries", func(deliveries chi.Router) {
 		deliveries.Post("/", s.createDelivery)
+		deliveries.Post("/{id}/assign", s.assignTruck)
 	})
 
 	return router

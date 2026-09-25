@@ -15,3 +15,15 @@ RETURNING id, sequence, stop_type, address, status;
 -- name: CreateDeliveryEvent :exec
 INSERT INTO delivery_events (delivery_id, stop_id, event_type, note)
 VALUES (@delivery_id, @stop_id, @event_type, @note);
+-- name: GetDelivery :one
+SELECT id, reference, tracking_token, customer_name, status, truck_id
+FROM deliveries
+WHERE id = @id;
+
+-- name: AssignTruck :one
+UPDATE deliveries
+SET truck_id = @truck_id,
+    status = 'assigned',
+    updated_at = now()
+WHERE id = @id
+RETURNING id, reference, status, truck_id;

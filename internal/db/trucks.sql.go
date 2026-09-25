@@ -44,6 +44,42 @@ func (q *Queries) CreateTruck(ctx context.Context, arg CreateTruckParams) (Creat
 	return i, err
 }
 
+const getTruckForUpdate = `-- name: GetTruckForUpdate :one
+SELECT id, plate_number, status
+FROM trucks
+WHERE id = $1
+FOR UPDATE
+`
+
+type GetTruckForUpdateRow struct {
+	ID          uuid.UUID `json:"id"`
+	PlateNumber string    `json:"plate_number"`
+	Status      string    `json:"status"`
+}
+
+func (q *Queries) GetTruckForUpdate(ctx context.Context, id uuid.UUID) (GetTruckForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getTruckForUpdate, id)
+	var i GetTruckForUpdateRow
+	err := row.Scan(&i.ID, &i.PlateNumber, &i.Status)
+	return i, err
+}
+
+const setTruckStatus = `-- name: SetTruckStatus :exec
+UPDATE trucks
+SET status = $1
+WHERE id = $2
+`
+
+type SetTruckStatusParams struct {
+	Status string    `json:"status"`
+	ID     uuid.UUID `json:"id"`
+}
+
+func (q *Queries) SetTruckStatus(ctx context.Context, arg SetTruckStatusParams) error {
+	_, err := q.db.Exec(ctx, setTruckStatus, arg.Status, arg.ID)
+	return err
+}
+
 const updateTruckPosition = `-- name: UpdateTruckPosition :exec
 UPDATE trucks
 SET last_position = ST_SetSRID(ST_MakePoint($1::float8, $2::float8), 4326)::geography,
