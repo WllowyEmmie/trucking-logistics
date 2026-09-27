@@ -27,3 +27,17 @@ SET truck_id = @truck_id,
     updated_at = now()
 WHERE id = @id
 RETURNING id, reference, status, truck_id;
+-- name: SetDeliveryStatus :one
+UPDATE deliveries
+SET status = @status,
+    updated_at = now()
+WHERE id = @id
+RETURNING id, reference, status, truck_id;
+
+-- name: ReleaseTruck :one
+UPDATE deliveries
+SET truck_id = NULL,
+    status = @status,
+    updated_at = now()
+WHERE id = @id
+RETURNING id, reference, status, truck_id;

@@ -191,3 +191,68 @@ func (q *Queries) GetDelivery(ctx context.Context, id uuid.UUID) (GetDeliveryRow
 	)
 	return i, err
 }
+
+const releaseTruck = `-- name: ReleaseTruck :one
+UPDATE deliveries
+SET truck_id = NULL,
+    status = $1,
+    updated_at = now()
+WHERE id = $2
+RETURNING id, reference, status, truck_id
+`
+
+type ReleaseTruckParams struct {
+	Status string    `json:"status"`
+	ID     uuid.UUID `json:"id"`
+}
+
+type ReleaseTruckRow struct {
+	ID        uuid.UUID  `json:"id"`
+	Reference string     `json:"reference"`
+	Status    string     `json:"status"`
+	TruckID   *uuid.UUID `json:"truck_id"`
+}
+
+func (q *Queries) ReleaseTruck(ctx context.Context, arg ReleaseTruckParams) (ReleaseTruckRow, error) {
+	row := q.db.QueryRow(ctx, releaseTruck, arg.Status, arg.ID)
+	var i ReleaseTruckRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reference,
+		&i.Status,
+		&i.TruckID,
+	)
+	return i, err
+}
+
+const setDeliveryStatus = `-- name: SetDeliveryStatus :one
+UPDATE deliveries
+SET status = $1,
+    updated_at = now()
+WHERE id = $2
+RETURNING id, reference, status, truck_id
+`
+
+type SetDeliveryStatusParams struct {
+	Status string    `json:"status"`
+	ID     uuid.UUID `json:"id"`
+}
+
+type SetDeliveryStatusRow struct {
+	ID        uuid.UUID  `json:"id"`
+	Reference string     `json:"reference"`
+	Status    string     `json:"status"`
+	TruckID   *uuid.UUID `json:"truck_id"`
+}
+
+func (q *Queries) SetDeliveryStatus(ctx context.Context, arg SetDeliveryStatusParams) (SetDeliveryStatusRow, error) {
+	row := q.db.QueryRow(ctx, setDeliveryStatus, arg.Status, arg.ID)
+	var i SetDeliveryStatusRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reference,
+		&i.Status,
+		&i.TruckID,
+	)
+	return i, err
+}

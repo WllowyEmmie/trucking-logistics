@@ -28,6 +28,11 @@ func (s *Server) Routes() http.Handler {
 	router.Route("/deliveries", func(deliveries chi.Router) {
 		deliveries.Post("/", s.createDelivery)
 		deliveries.Post("/{id}/assign", s.assignTruck)
+		deliveries.Post("/{id}/complete", s.completeDelivery)
+		deliveries.Post("/{id}/cancel", s.cancelDelivery)
+		deliveries.Post("/{id}/start", s.startDelivery)
+		deliveries.Post("/{id}/fail", s.failDelivery)
+		
 	})
 
 	return router
