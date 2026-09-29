@@ -16,6 +16,7 @@ func (s *Server) Routes() http.Handler {
 	router.Use(middleware.Timeout(15 * time.Second))
 
 	router.Get("/health", s.health)
+	router.Get("/track/{token}", s.trackDelivery)
 
 	router.Route("/trucks", func(trucks chi.Router) {
 		trucks.Get("/", s.listTrucks)
