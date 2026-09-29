@@ -41,3 +41,14 @@ SET truck_id = NULL,
     updated_at = now()
 WHERE id = @id
 RETURNING id, reference, status, truck_id;
+
+-- name: ListDeliveries :many
+SELECT id, reference, status, customer_name, truck_id, created_at
+FROM deliveries
+ORDER BY created_at DESC;
+
+-- name: ListDeliveriesByStatus :many
+SELECT id, reference, status, customer_name, truck_id, created_at
+FROM deliveries
+WHERE status = @status
+ORDER BY created_at DESC;

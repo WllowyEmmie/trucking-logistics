@@ -32,7 +32,7 @@ func (s *Server) Routes() http.Handler {
 		deliveries.Post("/{id}/cancel", s.cancelDelivery)
 		deliveries.Post("/{id}/start", s.startDelivery)
 		deliveries.Post("/{id}/fail", s.failDelivery)
-		
+		deliveries.Get("/", s.listDeliveries)
 	})
 
 	return router

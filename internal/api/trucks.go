@@ -36,7 +36,7 @@ func (s *Server) createTruck(w http.ResponseWriter, r *http.Request) {
 		Model:       body.Model,
 	})
 	if err != nil {
-		if isUniqueViolation(err){
+		if isUniqueViolation(err) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "a truck with that plate number already exists"})
 			return
 		}

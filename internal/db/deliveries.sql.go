@@ -192,6 +192,91 @@ func (q *Queries) GetDelivery(ctx context.Context, id uuid.UUID) (GetDeliveryRow
 	return i, err
 }
 
+const listDeliveries = `-- name: ListDeliveries :many
+SELECT id, reference, status, customer_name, truck_id, created_at
+FROM deliveries
+ORDER BY created_at DESC
+`
+
+type ListDeliveriesRow struct {
+	ID           uuid.UUID  `json:"id"`
+	Reference    string     `json:"reference"`
+	Status       string     `json:"status"`
+	CustomerName string     `json:"customer_name"`
+	TruckID      *uuid.UUID `json:"truck_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (q *Queries) ListDeliveries(ctx context.Context) ([]ListDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, listDeliveries)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeliveriesRow{}
+	for rows.Next() {
+		var i ListDeliveriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.Status,
+			&i.CustomerName,
+			&i.TruckID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeliveriesByStatus = `-- name: ListDeliveriesByStatus :many
+SELECT id, reference, status, customer_name, truck_id, created_at
+FROM deliveries
+WHERE status = $1
+ORDER BY created_at DESC
+`
+
+type ListDeliveriesByStatusRow struct {
+	ID           uuid.UUID  `json:"id"`
+	Reference    string     `json:"reference"`
+	Status       string     `json:"status"`
+	CustomerName string     `json:"customer_name"`
+	TruckID      *uuid.UUID `json:"truck_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (q *Queries) ListDeliveriesByStatus(ctx context.Context, status string) ([]ListDeliveriesByStatusRow, error) {
+	rows, err := q.db.Query(ctx, listDeliveriesByStatus, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeliveriesByStatusRow{}
+	for rows.Next() {
+		var i ListDeliveriesByStatusRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.Status,
+			&i.CustomerName,
+			&i.TruckID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const releaseTruck = `-- name: ReleaseTruck :one
 UPDATE deliveries
 SET truck_id = NULL,

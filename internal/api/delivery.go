@@ -19,6 +19,14 @@ const (
 	maxLng = 15.0
 )
 
+var validDeliveryStatuses = map[string]bool{
+	"pending":    true,
+	"assigned":   true,
+	"in_transit": true,
+	"completed":  true,
+	"cancelled":  true,
+	"failed":     true,
+}
 var validFailureReasons = map[string]bool{
 	"breakdown":            true,
 	"customer_unavailable": true,
@@ -43,6 +51,33 @@ type createDeliveryInput struct {
 	Stops         []stopInput `json:"stops"`
 }
 
+func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if status != "" {
+		if !validDeliveryStatuses[status] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "invalid delivery status",
+			})
+			return
+		}
+		deliveries, err := s.queries.ListDeliveriesByStatus(r.Context(), status)
+		if err != nil {
+			s.logger.Error("list deliveries", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list deliveries"})
+			return
+		}
+		writeJSON(w, http.StatusOK, deliveries)
+		return
+	}
+
+	deliveries, err := s.queries.ListDeliveries(r.Context())
+	if err != nil {
+		s.logger.Error("list deliveries", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list deliveries"})
+		return
+	}
+	writeJSON(w, http.StatusOK, deliveries)
+}
 func (s *Server) assignTruck(w http.ResponseWriter, r *http.Request) {
 	deliveryID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
