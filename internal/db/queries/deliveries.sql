@@ -52,3 +52,8 @@ SELECT id, reference, status, customer_name, truck_id, created_at
 FROM deliveries
 WHERE status = @status
 ORDER BY created_at DESC;
+-- name: GetDeliveryForUpdate :one
+SELECT id, reference, tracking_token, customer_name, status, truck_id
+FROM deliveries
+WHERE id = @id
+FOR UPDATE;

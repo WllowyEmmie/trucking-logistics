@@ -16,7 +16,10 @@ func (s *Server) Routes() http.Handler {
 	router.Use(middleware.Timeout(15 * time.Second))
 
 	router.Get("/health", s.health)
+	router.Get("/config", s.getConfig)
 	router.Get("/track/{token}", s.trackDelivery)
+
+	router.Post("/locations", s.ingestLocations)
 
 	router.Route("/trucks", func(trucks chi.Router) {
 		trucks.Get("/", s.listTrucks)
@@ -34,7 +37,11 @@ func (s *Server) Routes() http.Handler {
 		deliveries.Post("/{id}/start", s.startDelivery)
 		deliveries.Post("/{id}/fail", s.failDelivery)
 		deliveries.Get("/", s.listDeliveries)
+		deliveries.Get("/{id}", s.getDelivery)
+				deliveries.Post("/{id}/stops/{stopId}/arrive", s.arriveAtStop)
+		deliveries.Post("/{id}/stops/{stopId}/complete", s.completeStop) 
 	})
+
 
 	return router
 }

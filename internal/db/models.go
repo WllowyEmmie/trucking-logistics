@@ -43,6 +43,7 @@ type DeliveryStop struct {
 	ContactPhone *string     `json:"contact_phone"`
 	Status       string      `json:"status"`
 	ArrivedAt    *time.Time  `json:"arrived_at"`
+	CompletedAt  *time.Time  `json:"completed_at"`
 }
 
 type Driver struct {

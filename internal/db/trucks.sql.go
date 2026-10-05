@@ -82,16 +82,17 @@ func (q *Queries) SetTruckStatus(ctx context.Context, arg SetTruckStatusParams) 
 
 const updateTruckPosition = `-- name: UpdateTruckPosition :exec
 UPDATE trucks
-SET last_position = ST_SetSRID(ST_MakePoint($1::float8, $2::float8), 4326)::geography,
+SET last_position = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
     last_seen_at  = $3
 WHERE id = $4
+  AND (last_seen_at IS NULL OR last_seen_at < $3)
 `
 
 type UpdateTruckPositionParams struct {
-	Lng        float64    `json:"lng"`
-	Lat        float64    `json:"lat"`
-	RecordedAt *time.Time `json:"recorded_at"`
-	ID         uuid.UUID  `json:"id"`
+	Lng        interface{} `json:"lng"`
+	Lat        interface{} `json:"lat"`
+	RecordedAt *time.Time  `json:"recorded_at"`
+	ID         uuid.UUID   `json:"id"`
 }
 
 func (q *Queries) UpdateTruckPosition(ctx context.Context, arg UpdateTruckPositionParams) error {

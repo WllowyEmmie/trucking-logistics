@@ -6,10 +6,11 @@ RETURNING id, plate_number, model, status, created_at;
 
 -- name: UpdateTruckPosition :exec
 UPDATE trucks
-SET last_position = ST_SetSRID(ST_MakePoint(@lng::float8, @lat::float8), 4326)::geography,
+SET last_position = ST_SetSRID(ST_MakePoint(@lng, @lat), 4326)::geography,
     last_seen_at  = @recorded_at
-WHERE id = @id;
-
+WHERE id = @id
+  AND (last_seen_at IS NULL OR last_seen_at < @recorded_at);
+  
 -- name: GetTruckForUpdate :one
 SELECT id, plate_number, status
 FROM trucks

@@ -7,19 +7,27 @@ import (
 	"os"
 
 	"github.com/WllowyEmmie/trucking-logistics/internal/api"
+	"github.com/WllowyEmmie/trucking-logistics/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://fleet:fleet_dev_pw@127.0.0.1:5434/fleet?sslmode=disable"
+	if err := godotenv.Load(); err != nil {
+		logger.Info("no .env file found, using environment variables")
 	}
 
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := config.Load(logger)
+	if err != nil {
+		logger.Error("load config", "err", err)
+		os.Exit(1)
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+
 	if err != nil {
 		logger.Error("create pool", "err", err)
 		os.Exit(1)
@@ -32,10 +40,12 @@ func main() {
 	}
 	logger.Info("connected to database")
 
-	srv := api.NewServer(pool, logger)
+	srv := api.NewServer(pool, logger, cfg)
 
-	logger.Info("listening", "addr", ":8080")
-	if err := http.ListenAndServe(":8080", srv.Routes()); err != nil {
+	addr := ":" + cfg.Port
+
+	logger.Info("listening", "addr", addr)
+	if err := http.ListenAndServe(addr, srv.Routes()); err != nil {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
 	}

@@ -192,6 +192,36 @@ func (q *Queries) GetDelivery(ctx context.Context, id uuid.UUID) (GetDeliveryRow
 	return i, err
 }
 
+const getDeliveryForUpdate = `-- name: GetDeliveryForUpdate :one
+SELECT id, reference, tracking_token, customer_name, status, truck_id
+FROM deliveries
+WHERE id = $1
+FOR UPDATE
+`
+
+type GetDeliveryForUpdateRow struct {
+	ID            uuid.UUID  `json:"id"`
+	Reference     string     `json:"reference"`
+	TrackingToken string     `json:"tracking_token"`
+	CustomerName  string     `json:"customer_name"`
+	Status        string     `json:"status"`
+	TruckID       *uuid.UUID `json:"truck_id"`
+}
+
+func (q *Queries) GetDeliveryForUpdate(ctx context.Context, id uuid.UUID) (GetDeliveryForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getDeliveryForUpdate, id)
+	var i GetDeliveryForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reference,
+		&i.TrackingToken,
+		&i.CustomerName,
+		&i.Status,
+		&i.TruckID,
+	)
+	return i, err
+}
+
 const listDeliveries = `-- name: ListDeliveries :many
 SELECT id, reference, status, customer_name, truck_id, created_at
 FROM deliveries

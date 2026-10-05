@@ -12,13 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const (
-	minLat = 4.0
-	maxLat = 14.0
-	minLng = 2.5
-	maxLng = 15.0
-)
-
 var validDeliveryStatuses = map[string]bool{
 	"pending":    true,
 	"assigned":   true,
@@ -528,7 +521,7 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if msg := validateDeliveryInput(body); msg != "" {
+	if msg := s.validateDeliveryInput(body); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
@@ -602,7 +595,45 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		"stops":    stops,
 	})
 }
-func validateDeliveryInput(body createDeliveryInput) string {
+func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delivery id"})
+		return
+	}
+
+	detail, err := s.queries.GetDeliveryDetail(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
+		return
+	}
+	if err != nil {
+		s.logger.Error("get delivery", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load delivery"})
+		return
+	}
+
+	stops, err := s.queries.ListStopsForDelivery(r.Context(), id)
+	if err != nil {
+		s.logger.Error("list stops", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load delivery"})
+		return
+	}
+
+	events, err := s.queries.ListEventsForDelivery(r.Context(), id)
+	if err != nil {
+		s.logger.Error("list events", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load delivery"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"delivery": detail,
+		"stops":    stops,
+		"events":   events,
+	})
+}
+func (s *Server) validateDeliveryInput(body createDeliveryInput) string {
 	if body.CustomerName == "" {
 		return "customer_name is required"
 	}
@@ -623,8 +654,9 @@ func validateDeliveryInput(body createDeliveryInput) string {
 		if st.Lat == nil || st.Lng == nil {
 			return "every stop needs lat and lng"
 		}
-		if *st.Lat < minLat || *st.Lat > maxLat || *st.Lng < minLng || *st.Lng > maxLng {
-			return "coordinates must be within Nigeria — check that lat and lng aren't swapped"
+		if *st.Lat < s.cfg.MinLat || *st.Lat > s.cfg.MaxLat ||
+			*st.Lng < s.cfg.MinLng || *st.Lng > s.cfg.MaxLng {
+			return "coordinates must be within the service area — check that lat and lng aren't swapped"
 		}
 		if i > 0 && st.StopType == "pickup" {
 			return "only the first stop can be a pickup"
