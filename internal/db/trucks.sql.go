@@ -80,7 +80,51 @@ func (q *Queries) SetTruckStatus(ctx context.Context, arg SetTruckStatusParams) 
 	return err
 }
 
-const updateTruckPosition = `-- name: UpdateTruckPosition :exec
+const updateTruck = `-- name: UpdateTruck :one
+UPDATE trucks
+SET driver_id = CASE WHEN $1::bool THEN NULL
+                     ELSE COALESCE($2, driver_id) END,
+    status = $3
+WHERE id = $4
+RETURNING id, plate_number, model, status, driver_id, last_seen_at
+`
+
+type UpdateTruckParams struct {
+	ClearDriver bool       `json:"clear_driver"`
+	DriverID    *uuid.UUID `json:"driver_id"`
+	Status      string     `json:"status"`
+	ID          uuid.UUID  `json:"id"`
+}
+
+type UpdateTruckRow struct {
+	ID          uuid.UUID  `json:"id"`
+	PlateNumber string     `json:"plate_number"`
+	Model       *string    `json:"model"`
+	Status      string     `json:"status"`
+	DriverID    *uuid.UUID `json:"driver_id"`
+	LastSeenAt  *time.Time `json:"last_seen_at"`
+}
+
+func (q *Queries) UpdateTruck(ctx context.Context, arg UpdateTruckParams) (UpdateTruckRow, error) {
+	row := q.db.QueryRow(ctx, updateTruck,
+		arg.ClearDriver,
+		arg.DriverID,
+		arg.Status,
+		arg.ID,
+	)
+	var i UpdateTruckRow
+	err := row.Scan(
+		&i.ID,
+		&i.PlateNumber,
+		&i.Model,
+		&i.Status,
+		&i.DriverID,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const updateTruckPosition = `-- name: UpdateTruckPosition :execrows
 UPDATE trucks
 SET last_position = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
     last_seen_at  = $3
@@ -95,12 +139,15 @@ type UpdateTruckPositionParams struct {
 	ID         uuid.UUID   `json:"id"`
 }
 
-func (q *Queries) UpdateTruckPosition(ctx context.Context, arg UpdateTruckPositionParams) error {
-	_, err := q.db.Exec(ctx, updateTruckPosition,
+func (q *Queries) UpdateTruckPosition(ctx context.Context, arg UpdateTruckPositionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTruckPosition,
 		arg.Lng,
 		arg.Lat,
 		arg.RecordedAt,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

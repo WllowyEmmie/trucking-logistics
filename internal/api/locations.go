@@ -99,12 +99,16 @@ func (s *Server) ingestLocations(w http.ResponseWriter, r *http.Request) {
 		}
 
 	}
-	if err := qtx.UpdateTruckPosition(r.Context(), db.UpdateTruckPositionParams{
+	// 0 rows means the batch's newest ping is older than the stored position
+	// (a phone flushing an offline queue). It's kept in locations, but the
+	// truck didn't move, so there's nothing to tell clients.
+	moved, err := qtx.UpdateTruckPosition(r.Context(), db.UpdateTruckPositionParams{
 		ID:         truckID,
 		Lng:        latestLng,
 		Lat:        latestLat,
 		RecordedAt: latest,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger.Error("update truck position", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update truck position"})
 		return
@@ -113,6 +117,17 @@ func (s *Server) ingestLocations(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("commit tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update truck position"})
 		return
+	}
+	if moved > 0 {
+		s.hub.broadcast(wsMessage{
+			Type: "position",
+			Truck: &wsTruck{
+				ID:         truckID.String(),
+				Lng:        &latestLng,
+				Lat:        &latestLat,
+				LastSeenAt: latest,
+			},
+		})
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"accepted": len(body.Pings),

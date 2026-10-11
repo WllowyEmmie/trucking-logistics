@@ -13,17 +13,18 @@ import (
 )
 
 const listEventsForDelivery = `-- name: ListEventsForDelivery :many
-SELECT id, event_type, note, created_at
+SELECT id, event_type, stop_id, note, created_at
 FROM delivery_events
 WHERE delivery_id = $1
 ORDER BY created_at
 `
 
 type ListEventsForDeliveryRow struct {
-	ID        int64     `json:"id"`
-	EventType string    `json:"event_type"`
-	Note      *string   `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64      `json:"id"`
+	EventType string     `json:"event_type"`
+	StopID    *uuid.UUID `json:"stop_id"`
+	Note      *string    `json:"note"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 func (q *Queries) ListEventsForDelivery(ctx context.Context, deliveryID uuid.UUID) ([]ListEventsForDeliveryRow, error) {
@@ -38,6 +39,7 @@ func (q *Queries) ListEventsForDelivery(ctx context.Context, deliveryID uuid.UUI
 		if err := rows.Scan(
 			&i.ID,
 			&i.EventType,
+			&i.StopID,
 			&i.Note,
 			&i.CreatedAt,
 		); err != nil {

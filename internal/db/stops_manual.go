@@ -8,15 +8,17 @@ import (
 )
 
 type StopRow struct {
-	ID          uuid.UUID  `json:"id"`
-	Sequence    int32      `json:"sequence"`
-	StopType    string     `json:"stop_type"`
-	Address     string     `json:"address"`
-	Lng         *float64   `json:"lng"`
-	Lat         *float64   `json:"lat"`
-	Status      string     `json:"status"`
-	ArrivedAt   *time.Time `json:"arrived_at"`
-	CompletedAt *time.Time `json:"completed_at"`
+	ID           uuid.UUID  `json:"id"`
+	Sequence     int32      `json:"sequence"`
+	StopType     string     `json:"stop_type"`
+	Address      string     `json:"address"`
+	Lng          *float64   `json:"lng"`
+	Lat          *float64   `json:"lat"`
+	Status       string     `json:"status"`
+	ArrivedAt    *time.Time `json:"arrived_at"`
+	CompletedAt  *time.Time `json:"completed_at"`
+	ContactName  *string    `json:"contact_name"`
+	ContactPhone *string    `json:"contact_phone"`
 }
 
 func (q *Queries) ListStopsForDelivery(ctx context.Context, deliveryID uuid.UUID) ([]StopRow, error) {
@@ -24,7 +26,7 @@ func (q *Queries) ListStopsForDelivery(ctx context.Context, deliveryID uuid.UUID
 		SELECT id, sequence, stop_type, address,
 		       ST_X("position"::geometry) AS lng,
 		       ST_Y("position"::geometry) AS lat,
-		       status, arrived_at, completed_at
+		       status, arrived_at, completed_at, contact_name, contact_phone
 		FROM delivery_stops
 		WHERE delivery_id = $1
 		ORDER BY sequence`, deliveryID)
@@ -37,7 +39,7 @@ func (q *Queries) ListStopsForDelivery(ctx context.Context, deliveryID uuid.UUID
 	for rows.Next() {
 		var s StopRow
 		if err := rows.Scan(&s.ID, &s.Sequence, &s.StopType, &s.Address,
-			&s.Lng, &s.Lat, &s.Status, &s.ArrivedAt, &s.CompletedAt); err != nil {
+			&s.Lng, &s.Lat, &s.Status, &s.ArrivedAt, &s.CompletedAt, &s.ContactName, &s.ContactPhone); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

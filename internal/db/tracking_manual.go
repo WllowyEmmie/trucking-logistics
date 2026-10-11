@@ -24,6 +24,7 @@ type TrackingEvent struct {
 type TrackingDelivery struct {
 	Reference    string          `json:"reference"`
 	Status       string          `json:"status"`
+	PlateNumber  *string         `json:"plate_number"`
 	CustomerName string          `json:"customer_name"`
 	GoodsDesc    *string         `json:"goods_desc"`
 	CreatedAt    time.Time       `json:"created_at"`
@@ -42,12 +43,12 @@ func (q *Queries) GetDeliveryByToken(ctx context.Context, token string) (Trackin
 		SELECT d.id, d.reference, d.status, d.customer_name, d.goods_desc, d.created_at,
 		       ST_X(t.last_position::geometry) AS truck_lng,
 		       ST_Y(t.last_position::geometry) AS truck_lat,
-		       t.last_seen_at
+		       t.last_seen_at, t.plate_number
 		FROM deliveries d
 		LEFT JOIN trucks t ON t.id = d.truck_id
 		WHERE d.tracking_token = $1`, token).
 		Scan(&deliveryID, &d.Reference, &d.Status, &d.CustomerName, &d.GoodsDesc,
-			&d.CreatedAt, &d.TruckLng, &d.TruckLat, &d.TruckSeenAt)
+			&d.CreatedAt, &d.TruckLng, &d.TruckLat, &d.TruckSeenAt, &d.PlateNumber)
 	if err != nil {
 		return d, err
 	}

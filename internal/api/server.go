@@ -13,6 +13,7 @@ type Server struct {
 	queries *db.Queries
 	logger  *slog.Logger
 	cfg     *config.Config
+	hub     *hub
 }
 
 func NewServer(pool *pgxpool.Pool, logger *slog.Logger, cfg *config.Config) *Server {
@@ -21,5 +22,6 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger, cfg *config.Config) *Ser
 		queries: db.New(pool),
 		logger:  logger,
 		cfg:     cfg,
+		hub:     newHub(logger),
 	}
 }
