@@ -131,6 +131,13 @@ func reset(ctx context.Context, dsn string) error {
 	if err != nil {
 		return err
 	}
+	_, err = pool.Exec(ctx, `
+		TRUNCATE locations, delivery_events, delivery_stops, deliveries,
+		         trucks, drivers, proposals
+		RESTART IDENTITY CASCADE`)
+	if err != nil {
+		return err
+	}
 	_, err = pool.Exec(ctx, `ALTER SEQUENCE delivery_ref_seq RESTART 10001`)
 	return err
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -71,6 +72,64 @@ func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, deliveries)
 }
+
+// assignTruckTx applies the assignment rules inside a caller's transaction.
+// Both the dispatcher's endpoint and the agent's proposal approval go
+// through here, so neither can create a state the other forbids.
+func (s *Server) assignTruckTx(
+	ctx context.Context, qtx *db.Queries, deliveryID, truckID uuid.UUID,
+) (db.AssignTruckRow, error) {
+	var zero db.AssignTruckRow
+
+	delivery, err := qtx.GetDeliveryForUpdate(ctx, deliveryID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return zero, errNotFound("delivery not found")
+	}
+	if err != nil {
+		return zero, err
+	}
+	if delivery.Status != "pending" {
+		return zero, errConflict("delivery is " + delivery.Status + " and cannot be assigned")
+	}
+
+	truck, err := qtx.GetTruckForUpdate(ctx, truckID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return zero, errNotFound("truck not found")
+	}
+	if err != nil {
+		return zero, err
+	}
+	if truck.Status != "available" {
+		return zero, errConflict("truck " + truck.PlateNumber + " is " + truck.Status)
+	}
+
+	updated, err := qtx.AssignTruck(ctx, db.AssignTruckParams{
+		ID:      deliveryID,
+		TruckID: &truckID,
+	})
+	if err != nil {
+		return zero, err
+	}
+
+	if err := qtx.SetTruckStatus(ctx, db.SetTruckStatusParams{
+		ID:     truckID,
+		Status: "on_delivery",
+	}); err != nil {
+		return zero, err
+	}
+
+	note := "assigned to " + truck.PlateNumber
+	if err := qtx.CreateDeliveryEvent(ctx, db.CreateDeliveryEventParams{
+		DeliveryID: deliveryID,
+		EventType:  "assigned",
+		Note:       &note,
+	}); err != nil {
+		return zero, err
+	}
+
+	return updated, nil
+}
+
 func (s *Server) assignTruck(w http.ResponseWriter, r *http.Request) {
 	deliveryID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -99,69 +158,9 @@ func (s *Server) assignTruck(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	qtx := s.queries.WithTx(tx)
-
-	delivery, err := qtx.GetDelivery(r.Context(), deliveryID)
+	updated, err := s.assignTruckTx(r.Context(), s.queries.WithTx(tx), deliveryID, truckID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
-			return
-		}
-		s.logger.Error("get delivery", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
-		return
-	}
-	if delivery.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "delivery is " + delivery.Status + " and cannot be assigned",
-		})
-		return
-	}
-
-	truck, err := qtx.GetTruckForUpdate(r.Context(), truckID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "truck not found"})
-			return
-		}
-		s.logger.Error("get truck", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
-		return
-	}
-	if truck.Status != "available" {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "truck " + truck.PlateNumber + " is " + truck.Status,
-		})
-		return
-	}
-
-	updated, err := qtx.AssignTruck(r.Context(), db.AssignTruckParams{
-		ID:      deliveryID,
-		TruckID: &truckID,
-	})
-	if err != nil {
-		s.logger.Error("assign truck", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
-		return
-	}
-
-	if err := qtx.SetTruckStatus(r.Context(), db.SetTruckStatusParams{
-		ID:     truckID,
-		Status: "on_delivery",
-	}); err != nil {
-		s.logger.Error("set truck status", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
-		return
-	}
-
-	note := "assigned to " + truck.PlateNumber
-	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
-		DeliveryID: deliveryID,
-		EventType:  "assigned",
-		Note:       &note,
-	}); err != nil {
-		s.logger.Error("create event", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
+		s.respondErr(w, err, "assign truck", "could not assign truck")
 		return
 	}
 
@@ -329,6 +328,7 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Reason string `json:"reason"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
@@ -338,6 +338,11 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 			"error": "reason must be one of: breakdown, customer_unavailable, goods_damaged, accident, other",
 		})
 		return
+	}
+	nextStatus := "available"
+	switch body.Reason {
+	case "breakdown", "accident":
+		nextStatus = "maintenance"
 	}
 
 	tx, err := s.pool.Begin(r.Context())
@@ -375,7 +380,8 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery status"})
 		return
 	}
-
+	// The note is the bare reason: clients read it as data. The truck going
+	// to maintenance is its own event, below.
 	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
 		DeliveryID: deliveryID,
 		EventType:  "failed",
@@ -410,11 +416,22 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 
 	if err := qtx.SetTruckStatus(r.Context(), db.SetTruckStatusParams{
 		ID:     truck.ID,
-		Status: "available",
+		Status: nextStatus,
 	}); err != nil {
 		s.logger.Error("set truck status", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update truck status"})
 		return
+	}
+
+	if nextStatus == "maintenance" {
+		if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
+			DeliveryID: deliveryID,
+			EventType:  "truck_maintenance",
+		}); err != nil {
+			s.logger.Error("create event", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery"})
+			return
+		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {

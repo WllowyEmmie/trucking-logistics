@@ -83,7 +83,7 @@ func (q *Queries) GetDeliveryByToken(ctx context.Context, token string) (Trackin
 		SELECT event_type, note, created_at
 		FROM delivery_events
 		WHERE delivery_id = $1
-		ORDER BY created_at`, deliveryID)
+		ORDER BY created_at, id`, deliveryID)
 	if err != nil {
 		return d, err
 	}

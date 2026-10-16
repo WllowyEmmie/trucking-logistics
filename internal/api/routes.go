@@ -31,6 +31,7 @@ func (s *Server) Routes() http.Handler {
 
 		router.Get("/health", s.health)
 		router.Get("/config", s.getConfig)
+		router.Get("/geocode", s.geocodeAddress)
 		router.Get("/track/{token}", s.trackDelivery)
 
 		router.Post("/locations", s.ingestLocations)
@@ -55,6 +56,12 @@ func (s *Server) Routes() http.Handler {
 			deliveries.Get("/{id}", s.getDelivery)
 			deliveries.Post("/{id}/stops/{stopId}/arrive", s.arriveAtStop)
 			deliveries.Post("/{id}/stops/{stopId}/complete", s.completeStop)
+		})
+		router.Route("/proposals", func(proposals chi.Router) {
+			proposals.Get("/", s.listProposals)
+			proposals.Post("/", s.createProposal)
+			proposals.Post("/{id}/approve", s.approveProposal)
+			proposals.Post("/{id}/reject", s.rejectProposal)
 		})
 	})
 

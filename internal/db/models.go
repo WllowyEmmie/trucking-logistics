@@ -64,6 +64,21 @@ type Location struct {
 	CreatedAt  time.Time   `json:"created_at"`
 }
 
+type Proposal struct {
+	ID         uuid.UUID  `json:"id"`
+	Kind       string     `json:"kind"`
+	Status     string     `json:"status"`
+	Title      string     `json:"title"`
+	Why        string     `json:"why"`
+	DeliveryID *uuid.UUID `json:"delivery_id"`
+	TruckID    *uuid.UUID `json:"truck_id"`
+	Action     []byte     `json:"action"`
+	Changes    []byte     `json:"changes"`
+	CreatedAt  time.Time  `json:"created_at"`
+	DecidedAt  *time.Time `json:"decided_at"`
+	DecidedBy  *string    `json:"decided_by"`
+}
+
 type Truck struct {
 	ID           uuid.UUID   `json:"id"`
 	PlateNumber  string      `json:"plate_number"`

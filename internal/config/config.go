@@ -24,6 +24,13 @@ type Config struct {
 	// map opening view
 	CenterLat, CenterLng float64
 	DefaultZoom          int
+
+	// address search for delivery stops (GET /geocode). Nominatim by
+	// default: its policy wants an identifying User-Agent, and an email
+	// for contact if you send more than a little traffic.
+	GeocoderURL       string
+	GeocoderUserAgent string
+	GeocoderEmail     string
 }
 
 func Load(logger *slog.Logger) (*Config, error) {
@@ -33,6 +40,10 @@ func Load(logger *slog.Logger) (*Config, error) {
 		Units:       env("OPERATOR_UNITS", "metric"),
 		Timezone:    env("OPERATOR_TIMEZONE", "UTC"),
 		Language:    env("OPERATOR_LANGUAGE", "en"),
+
+		GeocoderURL:       env("GEOCODER_URL", "https://nominatim.openstreetmap.org"),
+		GeocoderUserAgent: env("GEOCODER_USER_AGENT", "trucking-logistics-dispatch/0.1"),
+		GeocoderEmail:     env("GEOCODER_EMAIL", ""),
 	}
 
 	if cfg.Units != "metric" && cfg.Units != "imperial" {

@@ -16,7 +16,7 @@ const listEventsForDelivery = `-- name: ListEventsForDelivery :many
 SELECT id, event_type, stop_id, note, created_at
 FROM delivery_events
 WHERE delivery_id = $1
-ORDER BY created_at
+ORDER BY created_at, id
 `
 
 type ListEventsForDeliveryRow struct {
