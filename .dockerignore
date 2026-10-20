@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+agent/.env
+agent/.venv
+**/__pycache__
+**/*.egg-info
+*.docx
+*.tar

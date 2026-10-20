@@ -1,0 +1,35 @@
+# Render Blueprint: New → Blueprint, pick this repo. Values marked
+# "sync: false" are asked for once, in the dashboard; they never go in git.
+services:
+  - type: web
+    name: dispatch-api
+    runtime: docker
+    plan: free
+    # Nearest Render region to the Supabase database (Ireland).
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Supabase → Connect → Session pooler (port 5432), with ?sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # Shared by the API and the agent inside the container. Render makes it.
+      - key: AGENT_API_KEY
+        generateValue: true
+      # A new OpenRouter key for this deployment.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # The website's address, e.g. https://your-app.vercel.app (no trailing slash).
+      - key: CORS_ORIGINS
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: OPERATOR_TIMEZONE
+        value: Africa/Lagos
+      # OpenStreetMap's address search asks for a contact email.
+      - key: GEOCODER_EMAIL
+        sync: false
+      # Lets the simulator put drivers on shift. Leave false with real drivers.
+      - key: ALLOW_DISPATCH_SHIFT_START
+        value: "false"

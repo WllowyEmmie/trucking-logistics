@@ -39,7 +39,16 @@ func (s *Server) Routes() http.Handler {
 	// The socket lives for as long as the client stays, so it sits outside
 	// the request timeout: that would cancel r.Context() and drop it at 15 s.
 	// The agent listens too, so auto mode reacts within seconds of a change.
-	router.With(requireRole(roleDispatcher, roleAgent)).Get("/ws", s.positionsSocket)
+	// A browser on another host signs in with a one-minute pass (wsticket.go).
+	router.With(s.ticketAuth, requireRole(roleDispatcher, roleAgent)).Get("/ws", s.positionsSocket)
+	router.With(requireRole(roleDispatcher)).Get("/ws/ticket", s.wsTicket)
+
+	// The agent beside the API, when it runs on the same host (AGENT_INTERNAL_URL).
+	// Outside the timeout: an answer can take a minute and a half.
+	if p := s.agentProxy(); p != nil {
+		router.Handle("/agent", p)
+		router.Handle("/agent/*", p)
+	}
 
 	router.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))

@@ -50,6 +50,9 @@ type Config struct {
 	// sharing of a driver's phone, so only the driver should start one.
 	// Turn it on for demos with the simulator.
 	AllowDispatchShiftStart bool
+	// AGENT_INTERNAL_URL: where the agent listens when it runs on the same
+	// host (e.g. http://127.0.0.1:8200); the API then serves it at /agent.
+	AgentInternalURL string
 	// How long a sign-in lasts.
 	DispatcherSessionTTL time.Duration
 	DriverSessionTTL     time.Duration
@@ -84,6 +87,7 @@ func Load(logger *slog.Logger) (*Config, error) {
 	}
 	cfg.CookieSecure = env("COOKIE_SECURE", "true") != "false"
 	cfg.AllowDispatchShiftStart = env("ALLOW_DISPATCH_SHIFT_START", "false") == "true"
+	cfg.AgentInternalURL = os.Getenv("AGENT_INTERNAL_URL")
 	var err error
 	if cfg.DispatcherSessionTTL, err = envDuration("DISPATCHER_SESSION_TTL", 12*time.Hour); err != nil {
 		return nil, err

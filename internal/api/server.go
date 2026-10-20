@@ -22,6 +22,8 @@ type Server struct {
 	logins    *throttle
 	loginsDay *throttle
 	geocoder  geocode.Geocoder
+	// One-minute passes for the live-updates socket (wsticket.go).
+	tickets *ticketStore
 
 	// The settings in effect (see config.go), swapped whole on save.
 	settings   atomic.Pointer[config.Settings]
@@ -39,6 +41,7 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger, cfg *config.Config) *Ser
 		logins:    newThrottle(5, 15*time.Minute),
 		loginsDay: newThrottle(20, 24*time.Hour),
 		geocoder:  geocode.NewNominatim(cfg.GeocoderURL, cfg.GeocoderUserAgent, cfg.GeocoderEmail),
+		tickets:   newTicketStore(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
