@@ -119,7 +119,7 @@ func newSim(t *testing.T, f *fakeAPI, clk *clock, failRate float64) *sim {
 		kph: kph, metres: kph * 1000 / 3600 * tick,
 		startAfter: 10 * time.Second, dwell: 20 * time.Second, failRate: failRate,
 		home: position{Lat: 6.43, Lng: 3.36},
-		runs: map[string]*run{}, at: map[string]position{},
+		runs: map[string]*run{}, at: map[string]position{}, returns: map[string]*homeward{},
 	}
 }
 
@@ -137,6 +137,7 @@ func tickUntil(t *testing.T, s *sim, f *fakeAPI, clk *clock, want string) {
 				t.Fatal(err)
 			}
 		}
+		s.drive(context.Background())
 		f.mu.Lock()
 		got := f.status
 		f.mu.Unlock()
@@ -261,5 +262,46 @@ func TestOnlyLocalAPIUnlessAllowed(t *testing.T) {
 		if err := checkLocal(u, true); err != nil {
 			t.Errorf("%s with -allow-remote: %v", u, err)
 		}
+	}
+}
+
+// With a depot, a truck that has finished drives back and parks there.
+func TestDrivesBackToDepot(t *testing.T) {
+	f, clk := newFakeAPI(), &clock{t: time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)}
+	s := newSim(t, f, clk, 0)
+	s.depot = &position{Lat: 6.43, Lng: 3.36}
+	tickUntil(t, s, f, clk, "completed")
+	if s.returns["t1"] == nil {
+		t.Fatal("not heading back after delivering")
+	}
+	for i := 0; i < 200 && s.returns["t1"] != nil; i++ {
+		s.drive(context.Background())
+	}
+	if s.returns["t1"] != nil {
+		t.Fatal("never got back")
+	}
+	last := f.pings[len(f.pings)-1]
+	if last.Lat != 6.43 || last.Lng != 3.36 || *last.SpeedKph != 0 {
+		t.Fatalf("last position %+v, want parked at the depot", last)
+	}
+}
+
+// Given a new delivery on the way back, it stops heading home.
+func TestNewDeliveryCancelsTheTripBack(t *testing.T) {
+	f, clk := newFakeAPI(), &clock{t: time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)}
+	s := newSim(t, f, clk, 0)
+	s.depot = &position{Lat: 6.43, Lng: 3.36}
+	tickUntil(t, s, f, clk, "completed")
+	f.mu.Lock()
+	f.status = "assigned"
+	for _, st := range f.stops {
+		st["status"] = "pending"
+	}
+	f.mu.Unlock()
+	if _, err := s.scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.returns["t1"] != nil {
+		t.Fatal("still heading back with a new delivery")
 	}
 }

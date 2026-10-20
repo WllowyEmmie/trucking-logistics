@@ -1,7 +1,8 @@
 // The simulator plays the drivers: for every delivery assigned to a truck it
 // starts the delivery after a short wait, drives the truck along the roads
 // to each stop (posting its position as a phone would), waits there a
-// moment, completes the stop, and finishes the delivery.
+// moment, completes the stop, finishes the delivery, and drives back to the
+// depot (when Settings has one).
 //
 // It's for development and demos. It refuses an API that isn't on this
 // machine unless you pass -allow-remote, so it can't feed made-up positions
@@ -46,6 +47,7 @@ func main() {
 		plates      = flag.String("plates", "", "comma-separated plates to move; empty moves every assigned truck")
 		osrm        = flag.String("osrm", envOr("OSRM_URL", "https://router.project-osrm.org"), "OSRM server for road routes; empty for straight lines")
 		allowRemote = flag.Bool("allow-remote", false, "allow an API that isn't on this machine")
+		shifts      = flag.Bool("shifts", true, "put the drivers of the trucks it moves on shift, so auto mode uses them")
 	)
 	flag.Parse()
 
@@ -78,8 +80,10 @@ func main() {
 		log.Fatalf("read settings: %v", err)
 	}
 	home := position{Lat: cfg.CenterLat, Lng: cfg.CenterLng}
+	var depot *position
 	if cfg.Depot != nil {
 		home = position{Lat: cfg.Depot.Lat, Lng: cfg.Depot.Lng}
+		depot = &home
 	}
 
 	s := &sim{
@@ -93,10 +97,13 @@ func main() {
 		dwell:      *dwell,
 		failRate:   *failRate,
 		plates:     plateSet(*plates),
+		shifts:     *shifts,
 		home:       home,
+		depot:      depot,
 		area:       &cfg.ServiceArea,
 		runs:       map[string]*run{},
 		at:         map[string]position{},
+		returns:    map[string]*homeward{},
 	}
 
 	only := "every assigned truck"
@@ -129,6 +136,7 @@ func main() {
 				log.Printf("%s: %v", w.d.Reference, err)
 			}
 		}
+		s.drive(ctx)
 		select {
 		case <-ctx.Done():
 			fmt.Println("\nstopped")

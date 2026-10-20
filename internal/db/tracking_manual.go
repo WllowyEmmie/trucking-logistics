@@ -105,9 +105,15 @@ func (q *Queries) GetDeliveryByToken(ctx context.Context, token string) (Trackin
 	}
 
 	eventRows, err := q.db.Query(ctx, `
-		SELECT event_type, note, created_at
+		SELECT event_type,
+		       -- Only these notes are for the customer: why it failed, and who signed.
+		       -- Others hold internal detail (who reopened it, the agent's reasoning).
+		       CASE WHEN event_type IN ('failed', 'proof') THEN note END,
+		       created_at
 		FROM delivery_events
 		WHERE delivery_id = $1
+		  AND event_type IN ('created', 'assigned', 'auto_assigned', 'in_transit', 'stop_arrived',
+		                     'stop_completed', 'completed', 'failed', 'proof', 'cancelled', 'reopened')
 		ORDER BY created_at, id`, deliveryID)
 	if err != nil {
 		return d, err

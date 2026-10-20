@@ -38,7 +38,8 @@ func (s *Server) Routes() http.Handler {
 
 	// The socket lives for as long as the client stays, so it sits outside
 	// the request timeout: that would cancel r.Context() and drop it at 15 s.
-	router.With(requireRole(roleDispatcher)).Get("/ws", s.positionsSocket)
+	// The agent listens too, so auto mode reacts within seconds of a change.
+	router.With(requireRole(roleDispatcher, roleAgent)).Get("/ws", s.positionsSocket)
 
 	router.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
@@ -88,6 +89,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/drivers/{id}/pin", s.setDriverPIN)
 			r.Post("/drivers/{id}/pin/generate", s.generateDriverPIN)
 			r.Post("/drivers/{id}/shift/end", s.endDriverShift)
+			r.Post("/drivers/{id}/shift/start", s.startDriverShift)
 			r.Post("/deliveries", s.createDelivery)
 			r.Post("/deliveries/{id}/assign", s.assignTruck)
 			r.Post("/deliveries/{id}/cancel", s.cancelDelivery)
@@ -103,6 +105,11 @@ func (s *Server) Routes() http.Handler {
 		// The queue: dispatchers read it, only the agent writes to it.
 		r.With(requireRole(roleDispatcher, roleAgent)).Get("/proposals", s.listProposals)
 		r.With(requireRole(roleAgent)).Post("/proposals", s.createProposal)
+
+		// Auto mode (supervisor.go): the agent acts, dispatchers see what it did.
+		r.With(requireRole(roleAgent)).Post("/supervisor/pair", s.supervisorPair)
+		r.With(requireRole(roleAgent)).Post("/supervisor/assign", s.supervisorAssign)
+		r.With(requireRole(roleDispatcher, roleAgent)).Get("/supervisor/actions", s.supervisorActions)
 	})
 
 	return router

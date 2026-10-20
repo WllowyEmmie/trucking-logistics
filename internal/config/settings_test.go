@@ -9,7 +9,7 @@ func nigeria() Settings {
 		MinLat: 4.2, MaxLat: 13.9, MinLng: 2.6, MaxLng: 14.7,
 		OperatorName: "Kestrel", SupportPhone: "+2348031234567",
 		StaleMinutes: 20, PendingMinutes: 120, FailedWindowMinutes: 60, PingSeconds: 15,
-		EtaSpeedKph: 25, StopMinutes: 10, BoardHours: 12,
+		EtaSpeedKph: 25, StopMinutes: 10, BoardHours: 12, AutoRadiusKm: 2,
 		Depot: &Depot{Address: "Apapa Wharf", Lat: 6.44, Lng: 3.36},
 	}
 }
@@ -23,6 +23,7 @@ func TestSettingsValidate(t *testing.T) {
 		"units":        func(s *Settings) { s.Units = "furlongs" },
 		"eta speed":    func(s *Settings) { s.EtaSpeedKph = 0 },
 		"stop minutes": func(s *Settings) { s.StopMinutes = -1 },
+		"auto radius":  func(s *Settings) { s.AutoRadiusKm = 0 },
 		"timezone":     func(s *Settings) { s.Timezone = "Lagos" },
 		"language":     func(s *Settings) { s.Language = "English" },
 		"lat order":    func(s *Settings) { s.MinLat, s.MaxLat = 13.9, 4.2 },

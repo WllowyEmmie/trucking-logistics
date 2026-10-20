@@ -39,6 +39,23 @@ func (s *Server) setMyShift(w http.ResponseWriter, r *http.Request) {
 // endDriverShift is POST /drivers/{id}/shift/end (dispatchers): for a
 // driver who went home with the app still on shift.
 func (s *Server) endDriverShift(w http.ResponseWriter, r *http.Request) {
+	s.dispatcherShift(w, r, false)
+}
+
+// startDriverShift is POST /drivers/{id}/shift/start (dispatchers), for
+// demos with the simulator: auto mode only uses drivers on shift. Off unless
+// ALLOW_DISPATCH_SHIFT_START=true, because a shift turns on the location
+// sharing of the driver's phone, and only the driver should decide that.
+func (s *Server) startDriverShift(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.AllowDispatchShiftStart {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the driver can start their shift (set ALLOW_DISPATCH_SHIFT_START=true on the API for demos)"})
+		return
+	}
+	s.dispatcherShift(w, r, true)
+}
+
+func (s *Server) dispatcherShift(w http.ResponseWriter, r *http.Request, on bool) {
+	what := map[bool]string{true: "could not start the shift", false: "could not end the shift"}[on]
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid driver id"})
@@ -48,10 +65,10 @@ func (s *Server) endDriverShift(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "driver not found"})
 		return
 	} else if err != nil {
-		s.respondErr(w, err, "get driver", "could not end the shift")
+		s.respondErr(w, err, "get driver", what)
 		return
 	}
-	s.changeShift(w, r, id, false, actorName(r))
+	s.changeShift(w, r, id, on, actorName(r))
 }
 
 func (s *Server) changeShift(w http.ResponseWriter, r *http.Request, driverID uuid.UUID, on bool, by string) {

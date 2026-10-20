@@ -11,6 +11,8 @@ type Truck struct {
 	Lng         *float64   `json:"lng"`
 	Lat         *float64   `json:"lat"`
 	LastSeenAt  *time.Time `json:"last_seen_at"`
+	// The truck's driver has a shift open.
+	DriverOnShift bool `json:"driver_on_shift"`
 }
 
 type Driver struct {

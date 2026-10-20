@@ -22,6 +22,8 @@ const maxApproachM = 30_000
 //	in_transit → drives to the next stop along the road, arrives,
 //	             waits dwell, completes the stop; after the last stop,
 //	             completes the delivery (or fails it, with failRate)
+//	finished   → drives back to the depot and parks there (drive),
+//	             unless it's given another delivery on the way
 type sim struct {
 	c      *client.Client
 	routes *router
@@ -34,14 +36,26 @@ type sim struct {
 	dwell      time.Duration
 	failRate   float64
 	plates     map[string]bool // empty: every truck
+	// Put the drivers of the trucks it moves on shift, so auto mode
+	// counts them as working (nobody is there to tap Start shift).
+	shifts bool
 
 	// Where trucks start when they have no usable position.
 	home position
+	// Where trucks go back to after a delivery; nil when Settings has no depot.
+	depot *position
 	// Service area: positions outside it are refused by the API.
 	area *client.ServiceArea
 
-	runs map[string]*run // by delivery id
-	at   map[string]position
+	runs    map[string]*run // by delivery id
+	at      map[string]position
+	returns map[string]*homeward // by truck id: on the way back to the depot
+}
+
+// homeward is a truck driving back to the depot after a delivery.
+type homeward struct {
+	leg   *path
+	plate string
 }
 
 // run is the simulator's memory of one delivery.
@@ -68,6 +82,17 @@ func (s *sim) scan(ctx context.Context) ([]work, error) {
 	plate := map[string]string{}
 	for _, t := range trucks {
 		plate[t.ID] = t.PlateNumber
+		if s.shifts && t.DriverID != nil && !t.DriverOnShift && (len(s.plates) == 0 || s.plates[t.PlateNumber]) {
+			if err := s.c.Post(ctx, "/drivers/"+*t.DriverID+"/shift/start", nil, nil); err != nil {
+				log.Printf("%s: can't put the driver on shift, so auto mode won't use this truck: %v", t.PlateNumber, err)
+				var ae *client.APIError
+				if errors.As(err, &ae) && ae.Status == 403 {
+					s.shifts = false // the API doesn't allow it; say so once
+				}
+			} else {
+				fmt.Printf("%s: driver on shift\n", t.PlateNumber)
+			}
+		}
 	}
 	var out []work
 	live := map[string]bool{}
@@ -86,6 +111,8 @@ func (s *sim) scan(ctx context.Context) ([]work, error) {
 			}
 			live[d.ID] = true
 			out = append(out, work{d: d, plate: p})
+			// A new delivery on the way back: it goes from where it is.
+			delete(s.returns, *d.TruckID)
 		}
 	}
 	// Forget deliveries that finished, were cancelled, or moved off our trucks.
@@ -142,6 +169,7 @@ func (s *sim) step(ctx context.Context, w work) error {
 			}
 			delete(s.runs, d.ID)
 			fmt.Printf("%s on %s: delivered\n", d.Reference, w.plate)
+			s.goHome(ctx, truckID, w.plate)
 			return nil
 		}
 		if next.Lat == nil || next.Lng == nil {
@@ -169,6 +197,7 @@ func (s *sim) step(ctx context.Context, w work) error {
 				}
 				delete(s.runs, d.ID)
 				fmt.Printf("%s on %s: failed at stop %d (customer unavailable)\n", d.Reference, w.plate, next.Sequence)
+				s.goHome(ctx, truckID, w.plate)
 				return nil
 			}
 			if err := s.c.CompleteStop(ctx, d.ID, next.ID); err != nil {
@@ -214,6 +243,39 @@ func (s *sim) step(ctx context.Context, w work) error {
 		return nil
 	}
 	return nil
+}
+
+// goHome sends a truck that has finished back to the depot.
+func (s *sim) goHome(ctx context.Context, truckID, plate string) {
+	from, ok := s.at[truckID]
+	if s.depot == nil || !ok || distanceM(from, *s.depot) <= arrivalRadiusM {
+		return
+	}
+	leg, err := s.routes.route(ctx, from, *s.depot)
+	if err != nil {
+		log.Printf("%s: %v; driving back in a straight line", plate, err)
+	}
+	s.returns[truckID] = &homeward{leg: leg, plate: plate}
+	fmt.Printf("%s: heading back to the depot, %.1f km\n", plate, leg.length()/1000)
+}
+
+// drive moves every truck on its way back one tick, and parks it at the
+// depot when it gets there. Its last position is then the depot.
+func (s *sim) drive(ctx context.Context) {
+	for truckID, h := range s.returns {
+		pos := h.leg.advance(s.metres)
+		speed := s.kph
+		done := h.leg.remaining() <= arrivalRadiusM
+		if done {
+			pos, speed = *s.depot, 0
+			delete(s.returns, truckID)
+			fmt.Printf("%s: parked at the depot\n", h.plate)
+		}
+		s.at[truckID] = pos
+		if err := s.report(ctx, truckID, pos, speed); err != nil {
+			log.Printf("%s: %v", h.plate, err)
+		}
+	}
 }
 
 // startFrom: where this process last put the truck, else the server's last

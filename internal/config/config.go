@@ -45,6 +45,11 @@ type Config struct {
 	// browsers still accept it on http://localhost. Set false only for a
 	// non-localhost dev setup without HTTPS.
 	CookieSecure bool
+	// ALLOW_DISPATCH_SHIFT_START: dispatchers (and so the simulator) may put
+	// a driver on shift. Off by default: a shift turns on the location
+	// sharing of a driver's phone, so only the driver should start one.
+	// Turn it on for demos with the simulator.
+	AllowDispatchShiftStart bool
 	// How long a sign-in lasts.
 	DispatcherSessionTTL time.Duration
 	DriverSessionTTL     time.Duration
@@ -78,6 +83,7 @@ func Load(logger *slog.Logger) (*Config, error) {
 		logger.Warn("AGENT_API_KEY is not set; the dispatch agent can't call the API")
 	}
 	cfg.CookieSecure = env("COOKIE_SECURE", "true") != "false"
+	cfg.AllowDispatchShiftStart = env("ALLOW_DISPATCH_SHIFT_START", "false") == "true"
 	var err error
 	if cfg.DispatcherSessionTTL, err = envDuration("DISPATCHER_SESSION_TTL", 12*time.Hour); err != nil {
 		return nil, err

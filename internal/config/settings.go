@@ -62,6 +62,13 @@ type Settings struct {
 	// {support_phone} are filled in where they're shown.
 	CustomerTerms string    `json:"customer_terms"`
 	CustomerFAQ   []FAQItem `json:"customer_faq"`
+
+	// Auto mode: the agent supervises instead of proposing. It gives
+	// drivers on shift with no truck a free truck, and assigns new
+	// deliveries to the nearest ready truck: within AutoRadiusKm of the
+	// pickup if there is one, otherwise the nearest anywhere.
+	AutoAssign   bool    `json:"auto_assign"`
+	AutoRadiusKm float64 `json:"auto_radius_km"`
 }
 
 type FAQItem struct {
@@ -102,6 +109,7 @@ func (c *Config) DefaultSettings() Settings {
 		PodSignatureRequired: true,
 		CustomerTerms:        DefaultTerms,
 		CustomerFAQ:          DefaultFAQ(),
+		AutoRadiusKm:         2,
 	}
 }
 
@@ -157,6 +165,8 @@ func (s *Settings) Validate() error {
 		return errors.New("the delivery terms are too long (10,000 characters at most)")
 	case len(s.CustomerFAQ) > 20:
 		return errors.New("20 questions at most")
+	case s.AutoRadiusKm < 0.1 || s.AutoRadiusKm > 100:
+		return errors.New("the auto mode distance must be 0.1 to 100 km")
 	}
 	for i := range s.CustomerFAQ {
 		f := &s.CustomerFAQ[i]

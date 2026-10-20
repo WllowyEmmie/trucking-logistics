@@ -50,6 +50,9 @@ func changedBy(path string) (topics []string, deliveryID string) {
 		topics = []string{"proposals", "deliveries", "trucks"}
 	case "config":
 		topics = []string{"config"}
+	case "supervisor":
+		// A pairing changes a truck's driver; an assignment a delivery too.
+		topics = []string{"supervisor", "deliveries", "trucks", "drivers", "proposals"}
 	case "auth":
 		// Signing in and out changes nothing anyone else sees; a shift does.
 		if len(parts) > 2 && parts[1] == "me" && parts[2] == "shift" {
