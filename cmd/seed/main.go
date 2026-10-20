@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -32,8 +33,22 @@ var places = []struct {
 	{"Agege", 6.6152, 3.3225},
 	{"Festac Town", 6.4653, 3.2808},
 	{"Ajah", 6.4667, 3.5667},
+	{"Ikoyi", 6.4549, 3.4246},
+	{"Maryland", 6.5711, 3.3667},
+	{"Mushin", 6.5273, 3.3540},
+	{"Ojota", 6.5866, 3.3792},
+	{"Ketu", 6.5977, 3.3897},
+	{"Gbagada", 6.5543, 3.3915},
+	{"Isolo", 6.5310, 3.3221},
+	{"Ikotun", 6.5487, 3.2650},
+	{"Ojo", 6.4600, 3.1800},
+	{"Magodo", 6.6195, 3.3889},
+	{"Ogba", 6.6276, 3.3433},
+	{"Sangotedo", 6.4720, 3.6280},
 }
 
+// 20 trucks and 20 drivers. The last few of each are left unpaired, so auto
+// mode has drivers to give a truck to (once they start a shift).
 var trucks = []struct {
 	Plate string
 	Model string
@@ -44,6 +59,20 @@ var trucks = []struct {
 	{"LAG-577-ME", "Mercedes-Benz Atego"},
 	{"LAG-690-QT", "Isuzu FVR"},
 	{"LAG-712-ZD", "MAN TGM"},
+	{"LAG-733-PF", "Isuzu NQR"},
+	{"LAG-745-RN", "Toyota Dyna"},
+	{"LAG-802-HU", "DAF LF"},
+	{"LAG-819-GB", "Hino 500"},
+	{"LAG-836-WE", "Iveco Eurocargo"},
+	{"LAG-851-SC", "Mitsubishi Fuso Fighter"},
+	{"LAG-867-LM", "Isuzu NPR"},
+	{"LAG-874-TY", "Mercedes-Benz Actros"},
+	{"LAG-890-KV", "Volvo FL"},
+	{"LAG-903-AB", "MAN TGL"},
+	{"LAG-915-CD", "Hino 300"},
+	{"LAG-928-EF", "Isuzu FVR"},
+	{"LAG-941-GH", "Toyota Dyna"},
+	{"LAG-956-JK", "Mitsubishi Canter"},
 }
 
 var drivers = []struct {
@@ -56,7 +85,26 @@ var drivers = []struct {
 	{"Ngozi Eze", "+2348012345004"},
 	{"Segun Adeyemi", "+2348012345005"},
 	{"Fatima Yusuf", "+2348012345006"},
+	{"Ibrahim Musa", "+2348012345007"},
+	{"Funke Akindele", "+2348012345008"},
+	{"Emeka Nwosu", "+2348012345009"},
+	{"Halima Bello", "+2348012345010"},
+	{"Kunle Ogunleye", "+2348012345011"},
+	{"Blessing Udoh", "+2348012345012"},
+	{"Yemi Alade", "+2348012345013"},
+	{"Musa Danjuma", "+2348012345014"},
+	{"Chiamaka Nnadi", "+2348012345015"},
+	{"Bayo Ojo", "+2348012345016"},
+	{"Aisha Lawal", "+2348012345017"},
+	{"Obinna Uche", "+2348012345018"},
+	{"Kemi Adebayo", "+2348012345019"},
+	{"Sani Abubakar", "+2348012345020"},
 }
+
+// How many trucks get a driver. The other trucks have none, and the other
+// drivers have no truck.
+const paired = 16
+
 var plan = []struct {
 	Target string
 	Stops  int
@@ -64,13 +112,23 @@ var plan = []struct {
 	{"pending", 2},
 	{"pending", 3},
 	{"pending", 2},
+	{"pending", 2},
+	{"pending", 4},
+	{"pending", 2},
 	{"assigned", 2},
 	{"assigned", 4},
+	{"assigned", 3},
 	{"in_transit", 2},
 	{"in_transit", 3},
+	{"in_transit", 2},
+	{"in_transit", 4},
+	{"completed", 2},
+	{"completed", 3},
+	{"completed", 2},
 	{"completed", 2},
 	{"cancelled", 2},
 	{"failed", 3},
+	{"failed", 2},
 }
 
 func main() {
@@ -156,10 +214,13 @@ var seedPIN = envOr("SEED_DRIVER_PIN", "1234")
 var customers = []string{
 	"Chidi Okafor", "Adebayo Logistics", "Zainab Trading Co",
 	"Lagos Steel Works", "Emeka Distributors", "Folake Imports",
+	"Eko Foods Ltd", "Ikeja Pharmacy", "Lekki Furniture Hub",
+	"Mainland Cement Depot", "Victoria Fashion House", "Yaba Tech Supplies",
 }
 
 var goods = []string{
 	"Building materials", "Frozen goods", "Electronics", "Pharmaceuticals",
+	"Furniture", "Bags of cement", "Beverages", "Textiles",
 }
 
 func buildDelivery(n int, stops int) client.CreateDeliveryInput {
@@ -190,11 +251,12 @@ func pickAvailable(ctx context.Context, c *client.Client) (string, error) {
 		return "", fmt.Errorf("list trucks: %w", err)
 	}
 	for _, t := range ts {
-		if t.Status == "available" {
+		// The API refuses a truck with no driver.
+		if t.Status == "available" && t.DriverID != nil {
 			return t.ID, nil
 		}
 	}
-	return "", errors.New("no available trucks left; the seed plan needs more trucks or fewer concurrent deliveries")
+	return "", errors.New("no available truck with a driver left; the seed plan needs more paired trucks or fewer concurrent deliveries")
 }
 
 // walkTo drives a freshly created delivery to the target state by calling the
@@ -265,9 +327,18 @@ func seed(ctx context.Context, c *client.Client) error {
 	}
 	fmt.Printf("seeded drivers sign in to the app with their phone number and PIN %s\n", seedPIN)
 
-	for i := range truckIDs {
+	for i := 0; i < paired && i < len(truckIDs) && i < len(driverIDs); i++ {
 		if err := c.UpdateTruck(ctx, truckIDs[i], &driverIDs[i], nil); err != nil {
 			return fmt.Errorf("link driver to truck %s: %w", trucks[i].Plate, err)
+		}
+	}
+	// Every truck starts somewhere on the map, so distances mean something.
+	now := time.Now()
+	for i, id := range truckIDs {
+		p := places[(i*5)%len(places)]
+		ping := []client.Ping{{Lat: p.Lat, Lng: p.Lng, RecordedAt: now}}
+		if err := c.PostLocations(ctx, id, ping); err != nil {
+			return fmt.Errorf("place truck %s at %s: %w", trucks[i].Plate, p.Name, err)
 		}
 	}
 	for i, p := range plan {
@@ -289,7 +360,7 @@ func seed(ctx context.Context, c *client.Client) error {
 			return fmt.Errorf("%s -> %s: %w", d.Delivery.Reference, p.Target, err)
 		}
 	}
-	fmt.Printf("seeded %d trucks, %d drivers, %d deliveries\n",
-		len(truckIDs), len(driverIDs), len(plan))
+	fmt.Printf("seeded %d trucks (%d with a driver), %d drivers (%d with no truck), %d deliveries\n",
+		len(truckIDs), paired, len(driverIDs), len(driverIDs)-paired, len(plan))
 	return nil
 }
