@@ -45,22 +45,23 @@ func (q *Queries) CreateTruck(ctx context.Context, arg CreateTruckParams) (Creat
 }
 
 const getTruckForUpdate = `-- name: GetTruckForUpdate :one
-SELECT id, plate_number, status
+SELECT id, plate_number, status, driver_id
 FROM trucks
 WHERE id = $1
 FOR UPDATE
 `
 
 type GetTruckForUpdateRow struct {
-	ID          uuid.UUID `json:"id"`
-	PlateNumber string    `json:"plate_number"`
-	Status      string    `json:"status"`
+	ID          uuid.UUID  `json:"id"`
+	PlateNumber string     `json:"plate_number"`
+	Status      string     `json:"status"`
+	DriverID    *uuid.UUID `json:"driver_id"`
 }
 
 func (q *Queries) GetTruckForUpdate(ctx context.Context, id uuid.UUID) (GetTruckForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getTruckForUpdate, id)
 	var i GetTruckForUpdateRow
-	err := row.Scan(&i.ID, &i.PlateNumber, &i.Status)
+	err := row.Scan(&i.ID, &i.PlateNumber, &i.Status, &i.DriverID)
 	return i, err
 }
 

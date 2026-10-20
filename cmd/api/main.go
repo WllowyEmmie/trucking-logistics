@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/WllowyEmmie/trucking-logistics/internal/api"
 	"github.com/WllowyEmmie/trucking-logistics/internal/config"
@@ -42,11 +46,40 @@ func main() {
 
 	srv := api.NewServer(pool, logger, cfg)
 
-	addr := ":" + cfg.Port
+	httpSrv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: srv.Routes(),
+		// Without these a client that sends headers slowly holds a
+		// connection open forever. No WriteTimeout: /ws stays open, and the
+		// other routes have their own 15 s timeout in Routes().
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
-	logger.Info("listening", "addr", addr)
-	if err := http.ListenAndServe(addr, srv.Routes()); err != nil {
+	// Ctrl-C or a container stop: let in-flight requests finish (a commit
+	// half-done is worse than a slow exit), then close the pool.
+	stop, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-stop.Done()
+		logger.Info("shutting down")
+		shutdownCtx, done := context.WithTimeout(context.Background(), 20*time.Second)
+		defer done()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown", "err", err)
+		}
+	}()
+
+	logger.Info("listening", "addr", httpSrv.Addr)
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+	// ListenAndServe returns as soon as Shutdown starts; wait for the
+	// in-flight requests before the deferred pool.Close runs under them.
+	<-drained
+	logger.Info("stopped")
 }

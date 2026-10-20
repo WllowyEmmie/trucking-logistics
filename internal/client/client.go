@@ -13,6 +13,17 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
+	// Sent as "Authorization: Bearer <token>": a session token from Login,
+	// or a service key from WithToken.
+	token string
+}
+
+// WithToken returns a copy that authenticates with token (e.g. the agent's
+// service key).
+func (c *Client) WithToken(token string) *Client {
+	cp := *c
+	cp.token = token
+	return &cp
 }
 
 func New(baseURL string) *Client {
@@ -47,6 +58,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -65,10 +79,41 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return &APIError{Status: res.StatusCode, Message: e.Error}
 	}
 
-	if out == nil {
+	if path == "/auth/login" || path == "/auth/driver-login" {
+		// The session comes back as a cookie; this client sends it as a
+		// bearer token instead, so it works over plain http too.
+		for _, ck := range res.Cookies() {
+			if ck.Name == "session" && ck.Value != "" {
+				c.token = ck.Value
+			}
+		}
+	}
+
+	if out == nil || res.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	return json.NewDecoder(res.Body).Decode(out)
+}
+
+// Me is GET /auth/me.
+type Me struct {
+	Role    string  `json:"role"`
+	ID      *string `json:"id"`
+	Name    string  `json:"name"`
+	Email   string  `json:"email"`
+	TruckID *string `json:"truck_id"`
+}
+
+// Login signs in as a dispatcher; later calls on c carry the session.
+func (c *Client) Login(ctx context.Context, email, password string) (Me, error) {
+	var me Me
+	return me, c.Post(ctx, "/auth/login", map[string]string{"email": email, "password": password}, &me)
+}
+
+// DriverLogin signs in as a driver with their phone and PIN.
+func (c *Client) DriverLogin(ctx context.Context, phone, pin string) (Me, error) {
+	var me Me
+	return me, c.Post(ctx, "/auth/driver-login", map[string]string{"phone": phone, "pin": pin}, &me)
 }
 
 func (c *Client) Get(ctx context.Context, path string, out any) error {
@@ -80,4 +125,11 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 }
 func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPatch, path, body, out)
+}
+
+// Token is the session token or key this client sends, if any.
+func (c *Client) Token() string { return c.token }
+
+func (c *Client) Put(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPut, path, body, out)
 }

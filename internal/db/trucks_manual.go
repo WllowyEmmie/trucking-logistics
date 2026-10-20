@@ -17,16 +17,19 @@ type TruckWithPosition struct {
 	Lng         *float64   `json:"lng"`
 	Lat         *float64   `json:"lat"`
 	LastSeenAt  *time.Time `json:"last_seen_at"`
+	// Whether the truck's driver is on shift (false with no driver).
+	DriverOnShift bool `json:"driver_on_shift"`
 }
 
 func (q *Queries) ListTrucks(ctx context.Context) ([]TruckWithPosition, error) {
 	rows, err := q.db.Query(ctx, `
-		SELECT id, plate_number, model, status, driver_id,
-		       ST_X(last_position::geometry) AS lng,
-		       ST_Y(last_position::geometry) AS lat,
-		       last_seen_at
-		FROM trucks
-		ORDER BY plate_number`)
+		SELECT t.id, t.plate_number, t.model, t.status, t.driver_id,
+		       ST_X(t.last_position::geometry) AS lng,
+		       ST_Y(t.last_position::geometry) AS lat,
+		       t.last_seen_at,
+		       EXISTS (SELECT 1 FROM driver_shifts s WHERE s.driver_id = t.driver_id AND s.ended_at IS NULL)
+		FROM trucks t
+		ORDER BY t.plate_number`)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +39,7 @@ func (q *Queries) ListTrucks(ctx context.Context) ([]TruckWithPosition, error) {
 	for rows.Next() {
 		var t TruckWithPosition
 		if err := rows.Scan(&t.ID, &t.PlateNumber, &t.Model, &t.Status,
-			&t.DriverID, &t.Lng, &t.Lat, &t.LastSeenAt); err != nil {
+			&t.DriverID, &t.Lng, &t.Lat, &t.LastSeenAt, &t.DriverOnShift); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

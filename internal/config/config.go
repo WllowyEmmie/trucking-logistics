@@ -3,8 +3,10 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,6 +33,21 @@ type Config struct {
 	GeocoderURL       string
 	GeocoderUserAgent string
 	GeocoderEmail     string
+
+	// Browser origins allowed to call the API and open the position socket.
+	// CORS_ORIGINS, comma-separated, e.g. "https://dispatch.example.com".
+	AllowedOrigins []string
+
+	// AGENT_API_KEY: the dispatch agent's service key, sent as
+	// "Authorization: Bearer <key>". Empty turns agent access off.
+	AgentAPIKey string
+	// COOKIE_SECURE: send the session cookie over HTTPS only. On by default;
+	// browsers still accept it on http://localhost. Set false only for a
+	// non-localhost dev setup without HTTPS.
+	CookieSecure bool
+	// How long a sign-in lasts.
+	DispatcherSessionTTL time.Duration
+	DriverSessionTTL     time.Duration
 }
 
 func Load(logger *slog.Logger) (*Config, error) {
@@ -46,6 +63,29 @@ func Load(logger *slog.Logger) (*Config, error) {
 		GeocoderEmail:     env("GEOCODER_EMAIL", ""),
 	}
 
+	cfg.AllowedOrigins = splitList(env("CORS_ORIGINS", "http://localhost:3000,http://localhost:3471"))
+	for _, o := range cfg.AllowedOrigins {
+		if u, err := url.Parse(o); err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("CORS_ORIGINS entry %q must be a full origin like https://dispatch.example.com", o)
+		}
+	}
+
+	cfg.AgentAPIKey = os.Getenv("AGENT_API_KEY")
+	if cfg.AgentAPIKey != "" && len(cfg.AgentAPIKey) < 32 {
+		return nil, fmt.Errorf("AGENT_API_KEY must be at least 32 characters (try: openssl rand -hex 32)")
+	}
+	if cfg.AgentAPIKey == "" {
+		logger.Warn("AGENT_API_KEY is not set; the dispatch agent can't call the API")
+	}
+	cfg.CookieSecure = env("COOKIE_SECURE", "true") != "false"
+	var err error
+	if cfg.DispatcherSessionTTL, err = envDuration("DISPATCHER_SESSION_TTL", 12*time.Hour); err != nil {
+		return nil, err
+	}
+	if cfg.DriverSessionTTL, err = envDuration("DRIVER_SESSION_TTL", 14*24*time.Hour); err != nil {
+		return nil, err
+	}
+
 	if cfg.Units != "metric" && cfg.Units != "imperial" {
 		return nil, fmt.Errorf("OPERATOR_UNITS must be metric or imperial, got %q", cfg.Units)
 	}
@@ -54,7 +94,6 @@ func Load(logger *slog.Logger) (*Config, error) {
 		return nil, fmt.Errorf("OPERATOR_TIMEZONE %q is not a valid IANA name: %w", cfg.Timezone, err)
 	}
 
-	var err error
 	if cfg.MinLat, err = envFloat("SERVICE_MIN_LAT", -90); err != nil {
 		return nil, err
 	}
@@ -99,6 +138,28 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimRight(strings.TrimSpace(p), "/"); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// OriginHosts is AllowedOrigins without the scheme, the form the websocket
+// origin check wants ("localhost:3000").
+func (c *Config) OriginHosts() []string {
+	out := make([]string, 0, len(c.AllowedOrigins))
+	for _, o := range c.AllowedOrigins {
+		if u, err := url.Parse(o); err == nil {
+			out = append(out, u.Host)
+		}
+	}
+	return out
+}
+
 func envFloat(key string, fallback float64) (float64, error) {
 	v := os.Getenv(key)
 	if v == "" {
@@ -109,6 +170,18 @@ func envFloat(key string, fallback float64) (float64, error) {
 		return 0, fmt.Errorf("%s must be a number, got %q", key, v)
 	}
 	return f, nil
+}
+
+func envDuration(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s must be a duration like 12h, got %q", key, v)
+	}
+	return d, nil
 }
 
 func envInt(key string, fallback int) (int, error) {

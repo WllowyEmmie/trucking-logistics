@@ -89,3 +89,25 @@ type DeliveryDetail struct {
 	} `json:"delivery"`
 	Stops []Stop `json:"stops"`
 }
+
+// ServiceArea and Depot: the parts of GET /config the simulator uses.
+type ServiceArea struct {
+	MinLat float64 `json:"min_lat"`
+	MaxLat float64 `json:"max_lat"`
+	MinLng float64 `json:"min_lng"`
+	MaxLng float64 `json:"max_lng"`
+}
+
+func (a ServiceArea) Contains(lat, lng float64) bool {
+	return lat >= a.MinLat && lat <= a.MaxLat && lng >= a.MinLng && lng <= a.MaxLng
+}
+
+type Config struct {
+	ServiceArea
+	CenterLat float64 `json:"center_lat"`
+	CenterLng float64 `json:"center_lng"`
+	Depot     *struct {
+		Lat float64 `json:"lat"`
+		Lng float64 `json:"lng"`
+	} `json:"depot"`
+}

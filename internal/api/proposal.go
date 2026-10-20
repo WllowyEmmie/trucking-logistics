@@ -20,10 +20,13 @@ var validProposalStatuses = map[string]bool{
 	"expired":  true,
 }
 
+// proposalAction is what approving runs: "assign" a pending delivery, or
+// "reopen" a failed one with a mode (see reopen.go).
 type proposalAction struct {
 	Type       string `json:"type"`
 	DeliveryID string `json:"delivery_id"`
 	TruckID    string `json:"truck_id"`
+	Mode       string `json:"mode,omitempty"`
 }
 type proposalResponse struct {
 	db.Proposal
@@ -43,9 +46,9 @@ func asProposalResponses(ps []db.Proposal) []proposalResponse {
 	return out
 }
 
-// TODO(auth): no sessions yet. Auto mode passes "agent" instead.
-func decidedBy(_ *http.Request) *string {
-	by := "dispatcher"
+// decidedBy is the dispatcher who approved or rejected: their email.
+func decidedBy(r *http.Request) *string {
+	by := actorName(r)
 	return &by
 }
 
@@ -123,6 +126,10 @@ func (s *Server) createProposal(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if isUniqueViolation(err) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "this delivery already has a proposal waiting"})
+			return
+		}
 		s.logger.Error("create proposal", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create proposal"})
 		return
@@ -158,8 +165,11 @@ func validateProposalInput(body createProposalInput) string {
 		if err := json.Unmarshal(body.Action, &act); err != nil {
 			return "action is not valid json"
 		}
-		if act.Type != "assign" {
-			return "action type must be assign"
+		if act.Type != "assign" && act.Type != "reopen" {
+			return "action type must be assign or reopen"
+		}
+		if act.Type == "reopen" && !validReopenModes[act.Mode] {
+			return "a reopen action needs mode resume, handover or restart"
 		}
 		if _, err := uuid.Parse(act.DeliveryID); err != nil {
 			return "action.delivery_id must be a uuid"
@@ -225,7 +235,7 @@ func (s *Server) approveProposal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch act.Type {
-	case "assign":
+	case "assign", "reopen":
 		deliveryID, err1 := uuid.Parse(act.DeliveryID)
 		truckID, err2 := uuid.Parse(act.TruckID)
 		if err1 != nil || err2 != nil {
@@ -234,7 +244,13 @@ func (s *Server) approveProposal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.assignTruckTx(r.Context(), qtx, deliveryID, truckID); err != nil {
+		var err error
+		if act.Type == "assign" {
+			_, err = s.assignTruckTx(r.Context(), qtx, deliveryID, truckID)
+		} else {
+			_, err = s.reopenTx(r.Context(), qtx, deliveryID, truckID, act.Mode, actorName(r)+", from the agent's suggestion")
+		}
+		if err != nil {
 			// The world moved while the proposal sat in the queue. The
 			// proposal is stale, not broken: retire it and say why.
 			var ae apiError

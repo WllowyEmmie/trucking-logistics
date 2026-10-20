@@ -18,10 +18,11 @@ func (s *Server) geocodeAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	st := s.st()
 	places, err := s.geocoder.Search(r.Context(), q, geocode.Bounds{
-		MinLat: s.cfg.MinLat, MaxLat: s.cfg.MaxLat,
-		MinLng: s.cfg.MinLng, MaxLng: s.cfg.MaxLng,
-	}, s.cfg.Language)
+		MinLat: st.MinLat, MaxLat: st.MaxLat,
+		MinLng: st.MinLng, MaxLng: st.MaxLng,
+	}, st.Language)
 	if err != nil {
 		s.logger.Error("geocode", "err", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "address search is unavailable right now; enter the coordinates instead"})

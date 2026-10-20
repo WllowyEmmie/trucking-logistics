@@ -89,6 +89,16 @@ func main() {
 		log.Fatalf("API not reachable at %s: %v\n\nStart it with: go run ./cmd/api", *baseURL, err)
 	}
 
+	// The API needs a dispatcher sign-in. Make one with:
+	//   go run ./cmd/adduser -email you@example.com -name "Your Name"
+	email, password := os.Getenv("SEED_EMAIL"), os.Getenv("SEED_PASSWORD")
+	if email == "" || password == "" {
+		log.Fatal("set SEED_EMAIL and SEED_PASSWORD to a dispatcher account (create one with: go run ./cmd/adduser)")
+	}
+	if _, err := c.Login(ctx, email, password); err != nil {
+		log.Fatalf("sign in as %s: %v", email, err)
+	}
+
 	if *doReset {
 		dsn := envOr("DATABASE_URL", "")
 		if err := reset(ctx, dsn); err != nil {
@@ -126,21 +136,22 @@ func reset(ctx context.Context, dsn string) error {
 	defer pool.Close()
 
 	_, err = pool.Exec(ctx, `
-		TRUNCATE locations, delivery_events, delivery_stops, deliveries, trucks, drivers
-		RESTART IDENTITY CASCADE`)
-	if err != nil {
-		return err
-	}
-	_, err = pool.Exec(ctx, `
 		TRUNCATE locations, delivery_events, delivery_stops, deliveries,
 		         trucks, drivers, proposals
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		return err
 	}
+	// Drivers are gone, so are their sign-ins. Dispatcher accounts stay.
+	if _, err = pool.Exec(ctx, `DELETE FROM sessions WHERE role = 'driver'`); err != nil {
+		return err
+	}
 	_, err = pool.Exec(ctx, `ALTER SEQUENCE delivery_ref_seq RESTART 10001`)
 	return err
 }
+
+// The PIN every seeded driver gets. Dev data only.
+var seedPIN = envOr("SEED_DRIVER_PIN", "1234")
 
 var customers = []string{
 	"Chidi Okafor", "Adebayo Logistics", "Zainab Trading Co",
@@ -247,7 +258,12 @@ func seed(ctx context.Context, c *client.Client) error {
 			return fmt.Errorf("create driver %s: %w", d.Name, err)
 		}
 		driverIDs = append(driverIDs, created.ID)
+		// So the driver app can be tried with any seeded driver.
+		if err := c.SetDriverPIN(ctx, created.ID, seedPIN); err != nil {
+			return fmt.Errorf("set PIN for %s: %w", d.Name, err)
+		}
 	}
+	fmt.Printf("seeded drivers sign in to the app with their phone number and PIN %s\n", seedPIN)
 
 	for i := range truckIDs {
 		if err := c.UpdateTruck(ctx, truckIDs[i], &driverIDs[i], nil); err != nil {

@@ -1,5 +1,4 @@
 -- name: CreateProposal :one
--- name: CreateProposal :one
 INSERT INTO proposals (kind, title, why, delivery_id, truck_id, action, changes)
 VALUES (@kind, @title, @why, @delivery_id, @truck_id, @action, @changes)
 RETURNING id, kind, status, title, why, delivery_id, truck_id, action, changes,

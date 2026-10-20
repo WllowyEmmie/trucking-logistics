@@ -77,3 +77,23 @@ func (c *Client) PostLocations(ctx context.Context, truckID string, pings []Ping
 	body := map[string]any{"truck_id": truckID, "pings": pings}
 	return c.Post(ctx, "/locations", body, nil)
 }
+
+// SetDriverPIN is POST /drivers/{id}/pin (dispatchers only).
+func (c *Client) SetDriverPIN(ctx context.Context, driverID, pin string) error {
+	return c.Post(ctx, "/drivers/"+driverID+"/pin", map[string]string{"pin": pin}, nil)
+}
+
+// GenerateDriverPIN is POST /drivers/{id}/pin/generate (dispatchers only):
+// a new random PIN, returned once; the old one stops working.
+func (c *Client) GenerateDriverPIN(ctx context.Context, driverID string) (string, error) {
+	var out struct {
+		PIN string `json:"pin"`
+	}
+	err := c.Post(ctx, "/drivers/"+driverID+"/pin/generate", nil, &out)
+	return out.PIN, err
+}
+
+func (c *Client) GetConfig(ctx context.Context) (Config, error) {
+	var out Config
+	return out, c.Get(ctx, "/config", &out)
+}

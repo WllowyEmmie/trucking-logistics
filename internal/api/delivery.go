@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -43,34 +44,35 @@ type createDeliveryInput struct {
 	CustomerPhone *string     `json:"customer_phone"`
 	GoodsDesc     *string     `json:"goods_desc"`
 	Stops         []stopInput `json:"stops"`
+	// Promised by, for the last drop-off. Optional.
+	DueBy *time.Time `json:"due_by"`
 }
 
 func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	if status != "" {
-		if !validDeliveryStatuses[status] {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "invalid delivery status",
-			})
-			return
-		}
-		deliveries, err := s.queries.ListDeliveriesByStatus(r.Context(), status)
-		if err != nil {
-			s.logger.Error("list deliveries", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list deliveries"})
-			return
-		}
-		writeJSON(w, http.StatusOK, deliveries)
+	if status != "" && !validDeliveryStatuses[status] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delivery status"})
 		return
 	}
-
-	deliveries, err := s.queries.ListDeliveries(r.Context())
+	// ?board=1: what the console shows (see ListDeliveryItems). Older
+	// finished deliveries are in GET /deliveries/history.
+	var since *time.Time
+	if r.URL.Query().Get("board") == "1" {
+		t := time.Now().Add(-time.Duration(s.st().BoardHours) * time.Hour)
+		since = &t
+	}
+	items, err := s.queries.ListDeliveryItems(r.Context(), status, since)
 	if err != nil {
-		s.logger.Error("list deliveries", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list deliveries"})
+		s.respondErr(w, err, "list deliveries", "could not list deliveries")
 		return
 	}
-	writeJSON(w, http.StatusOK, deliveries)
+	items = onlyMine(r, items, func(p *principal, d db.DeliveryItem) bool { return onTruckOf(p, d.TruckID) })
+	out, err := s.withETAs(r, items)
+	if err != nil {
+		s.respondErr(w, err, "estimate arrivals", "could not list deliveries")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // assignTruckTx applies the assignment rules inside a caller's transaction.
@@ -101,6 +103,11 @@ func (s *Server) assignTruckTx(
 	}
 	if truck.Status != "available" {
 		return zero, errConflict("truck " + truck.PlateNumber + " is " + truck.Status)
+	}
+	// Nobody would drive it: the delivery would sit "assigned" with no one
+	// to start it, and no driver app would ever show it.
+	if truck.DriverID == nil {
+		return zero, errConflict("truck " + truck.PlateNumber + " has no driver; give it a driver in Fleet first")
 	}
 
 	updated, err := qtx.AssignTruck(ctx, db.AssignTruckParams{
@@ -188,7 +195,7 @@ func (s *Server) startDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 
 	qtx := s.queries.WithTx(tx)
-	delivery, err := qtx.GetDelivery(r.Context(), deliveryID)
+	delivery, err := qtx.GetDeliveryForUpdate(r.Context(), deliveryID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
@@ -212,6 +219,13 @@ func (s *Server) startDelivery(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("set status", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery status"})
 		return
+	}
+	// Setting off starts the driver's shift, so their GPS is recorded.
+	if p := principalFrom(r.Context()); p != nil && p.Role == roleDriver {
+		if _, err := qtx.StartShift(r.Context(), p.ID); err != nil {
+			s.respondErr(w, err, "start shift", "could not update delivery status")
+			return
+		}
 	}
 	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
 		DeliveryID: deliveryID,
@@ -245,7 +259,7 @@ func (s *Server) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := s.queries.WithTx(tx)
 
-	delivery, err := qtx.GetDelivery(r.Context(), deliveryID)
+	delivery, err := qtx.GetDeliveryForUpdate(r.Context(), deliveryID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
@@ -258,6 +272,21 @@ func (s *Server) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	if delivery.Status != "in_transit" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "delivery is " + delivery.Status + " and cannot be updated to completed",
+		})
+		return
+	}
+	// Every stop must be done first, or the record says "delivered" while
+	// goods are still on the truck. The driver app sends the last stop's
+	// arrive/complete ahead of /complete, so this costs it nothing.
+	open, err := qtx.CountIncompleteStops(r.Context(), deliveryID)
+	if err != nil {
+		s.logger.Error("count stops", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery status"})
+		return
+	}
+	if open > 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "delivery still has open stops; complete every stop first",
 		})
 		return
 	}
@@ -354,7 +383,7 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := s.queries.WithTx(tx)
 
-	delivery, err := qtx.GetDelivery(r.Context(), deliveryID)
+	delivery, err := qtx.GetDeliveryForUpdate(r.Context(), deliveryID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
@@ -461,7 +490,7 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := s.queries.WithTx(tx)
 
-	delivery, err := qtx.GetDelivery(r.Context(), deliveryID)
+	delivery, err := qtx.GetDeliveryForUpdate(r.Context(), deliveryID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "delivery not found"})
@@ -471,7 +500,11 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not cancel delivery"})
 		return
 	}
-	if delivery.Status != "pending" && delivery.Status != "assigned" {
+	// In transit: the customer called it off on the way. Failed: it won't
+	// be sent out again, so it leaves the console's failed list.
+	switch delivery.Status {
+	case "pending", "assigned", "in_transit", "failed":
+	default:
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "delivery is " + delivery.Status + " and cannot be cancelled",
 		})
@@ -494,7 +527,8 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not cancel delivery"})
 		return
 	}
-	if delivery.TruckID != nil {
+	// A failed delivery already let its truck go (available, or the workshop).
+	if delivery.TruckID != nil && delivery.Status != "failed" {
 		truck, err := qtx.GetTruckForUpdate(r.Context(), *delivery.TruckID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -592,6 +626,13 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		stops = append(stops, stop)
 	}
 
+	if body.DueBy != nil {
+		if _, err := qtx.SetDueBy(r.Context(), delivery.ID, body.DueBy); err != nil {
+			s.respondErr(w, err, "set due", "could not create delivery")
+			return
+		}
+	}
+
 	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
 		DeliveryID: delivery.ID,
 		EventType:  "created",
@@ -648,11 +689,17 @@ func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
 		"delivery": detail,
 		"stops":    stops,
 		"events":   events,
+		// Estimated arrival at each stop left, and at the last; null when
+		// it isn't on the road or the truck has no position.
+		"eta": s.estimate(detail.Status, detail.TruckLat, detail.TruckLng, stops),
 	})
 }
 func (s *Server) validateDeliveryInput(body createDeliveryInput) string {
 	if body.CustomerName == "" {
 		return "customer_name is required"
+	}
+	if msg := checkDue(body.DueBy); msg != "" {
+		return msg
 	}
 	if len(body.Stops) < 2 {
 		return "at least two stops are required"
@@ -661,6 +708,7 @@ func (s *Server) validateDeliveryInput(body createDeliveryInput) string {
 		return "the first stop must be a pickup"
 	}
 
+	area := s.st()
 	for i, st := range body.Stops {
 		if st.StopType != "pickup" && st.StopType != "dropoff" {
 			return "stop_type must be pickup or dropoff"
@@ -671,8 +719,7 @@ func (s *Server) validateDeliveryInput(body createDeliveryInput) string {
 		if st.Lat == nil || st.Lng == nil {
 			return "every stop needs lat and lng"
 		}
-		if *st.Lat < s.cfg.MinLat || *st.Lat > s.cfg.MaxLat ||
-			*st.Lng < s.cfg.MinLng || *st.Lng > s.cfg.MaxLng {
+		if !area.Contains(*st.Lat, *st.Lng) {
 			return "coordinates must be within the service area — check that lat and lng aren't swapped"
 		}
 		if i > 0 && st.StopType == "pickup" {

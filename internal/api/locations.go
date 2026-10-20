@@ -33,14 +33,34 @@ func (s *Server) ingestLocations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid truck id"})
 		return
 	}
+	// A driver reports for their own truck only: no placing someone else's
+	// truck on the map. 404, not 403, so ids can't be probed.
+	if !principalFrom(r.Context()).ownsTruck(truckID) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "truck not found"})
+		return
+	}
 	if len(body.Pings) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one ping is required"})
 		return
+	}
+	// A driver's position is recorded only on shift, whatever the phone
+	// sends. (A dispatcher, or the simulator, isn't a driver.)
+	if p := principalFrom(r.Context()); p != nil && p.Role == roleDriver {
+		since, err := s.queries.OpenShift(r.Context(), p.ID)
+		if err != nil {
+			s.respondErr(w, err, "open shift", "could not record locations")
+			return
+		}
+		if since == nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "you're off shift: positions aren't recorded"})
+			return
+		}
 	}
 	if len(body.Pings) > 500 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many pings"})
 		return
 	}
+	area := s.st()
 	for _, p := range body.Pings {
 		if p.Lat == nil || p.Lng == nil || p.RecordedAt == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "every ping needs lat, lng and recorded_at"})
@@ -51,8 +71,7 @@ func (s *Server) ingestLocations(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "recorded_at cannot be in the future"})
 			return
 		}
-		if *p.Lat < s.cfg.MinLat || *p.Lat > s.cfg.MaxLat ||
-			*p.Lng < s.cfg.MinLng || *p.Lng > s.cfg.MaxLng {
+		if !area.Contains(*p.Lat, *p.Lng) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "coordinates must be within the service area"})
 			return
 		}

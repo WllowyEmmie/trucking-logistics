@@ -100,6 +100,19 @@ func (s *Server) advanceStop(w http.ResponseWriter, r *http.Request, action stri
 				"error": "stop is " + stop.Status + "; mark arrival first"})
 			return
 		}
+		// A driver completes a drop-off with proof of delivery. A dispatcher
+		// stepping in for a dead phone doesn't need it.
+		if p := principalFrom(r.Context()); p != nil && p.Role == roleDriver && stop.StopType == "dropoff" {
+			proof, perr := qtx.GetProof(r.Context(), stopID)
+			if perr != nil {
+				s.respondErr(w, perr, "get proof", "could not update stop")
+				return
+			}
+			if msg := s.proofMissing(proof); msg != "" {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": msg})
+				return
+			}
+		}
 		var c db.MarkStopCompletedRow
 		c, err = qtx.MarkStopCompleted(r.Context(), stopID)
 		updated = db.MarkStopArrivedRow(c)

@@ -7,11 +7,15 @@ import (
 )
 
 type wsMessage struct {
-	Type string `json:"type"` // "snapshot" | "position"
+	Type string `json:"type"` // "snapshot" | "position" | "changed"
 	// Set on snapshot: every truck as the client should start out.
 	Trucks []wsTruck `json:"trucks,omitempty"`
 	// Set on position: the one truck that moved.
 	Truck *wsTruck `json:"truck,omitempty"`
+	// Set on changed: what to refetch ("deliveries", "trucks", "drivers",
+	// "proposals", "config"), and the delivery when one was changed.
+	Topics     []string `json:"topics,omitempty"`
+	DeliveryID string   `json:"delivery_id,omitempty"`
 }
 
 type wsTruck struct {

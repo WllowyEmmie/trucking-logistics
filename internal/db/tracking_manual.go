@@ -13,6 +13,15 @@ type TrackingStop struct {
 	Lat       float64    `json:"lat"`
 	Status    string     `json:"status"`
 	ArrivedAt *time.Time `json:"arrived_at"`
+	// Who received it, and whether a photo and a signature can be fetched.
+	Proof *TrackingProof `json:"proof"`
+}
+
+type TrackingProof struct {
+	ReceiverName string    `json:"receiver_name"`
+	CapturedAt   time.Time `json:"captured_at"`
+	HasPhoto     bool      `json:"has_photo"`
+	HasSignature bool      `json:"has_signature"`
 }
 
 type TrackingEvent struct {
@@ -31,6 +40,9 @@ type TrackingDelivery struct {
 	TruckLng     *float64        `json:"truck_lng"`
 	TruckLat     *float64        `json:"truck_lat"`
 	TruckSeenAt  *time.Time      `json:"truck_seen_at"`
+	DueBy        *time.Time      `json:"due_by"`
+	// Estimated arrival at the last stop; set by the API, not the query.
+	ETA          *time.Time      `json:"eta"`
 	Stops        []TrackingStop  `json:"stops"`
 	Events       []TrackingEvent `json:"events"`
 }
@@ -43,24 +55,31 @@ func (q *Queries) GetDeliveryByToken(ctx context.Context, token string) (Trackin
 		SELECT d.id, d.reference, d.status, d.customer_name, d.goods_desc, d.created_at,
 		       ST_X(t.last_position::geometry) AS truck_lng,
 		       ST_Y(t.last_position::geometry) AS truck_lat,
-		       t.last_seen_at, t.plate_number
+		       t.last_seen_at, t.plate_number, d.due_by
 		FROM deliveries d
 		LEFT JOIN trucks t ON t.id = d.truck_id
 		WHERE d.tracking_token = $1`, token).
 		Scan(&deliveryID, &d.Reference, &d.Status, &d.CustomerName, &d.GoodsDesc,
-			&d.CreatedAt, &d.TruckLng, &d.TruckLat, &d.TruckSeenAt, &d.PlateNumber)
+			&d.CreatedAt, &d.TruckLng, &d.TruckLat, &d.TruckSeenAt, &d.PlateNumber, &d.DueBy)
 	if err != nil {
 		return d, err
 	}
+	// A finished delivery keeps its truck_id, so without this an old link
+	// would keep showing that truck's live position on its later jobs.
+	if d.Status != "assigned" && d.Status != "in_transit" {
+		d.TruckLng, d.TruckLat, d.TruckSeenAt = nil, nil, nil
+	}
 
 	stopRows, err := q.db.Query(ctx, `
-		SELECT sequence, stop_type, address,
-		       ST_X(position::geometry) AS lng,
-		       ST_Y(position::geometry) AS lat,
-		       status, arrived_at
-		FROM delivery_stops
-		WHERE delivery_id = $1
-		ORDER BY sequence`, deliveryID)
+		SELECT s.sequence, s.stop_type, s.address,
+		       ST_X(s.position::geometry) AS lng,
+		       ST_Y(s.position::geometry) AS lat,
+		       s.status, s.arrived_at,
+		       p.receiver_name, p.captured_at, p.photo IS NOT NULL, p.signature IS NOT NULL
+		FROM delivery_stops s
+		LEFT JOIN stop_proofs p ON p.stop_id = s.id
+		WHERE s.delivery_id = $1
+		ORDER BY s.sequence`, deliveryID)
 	if err != nil {
 		return d, err
 	}
@@ -69,9 +88,15 @@ func (q *Queries) GetDeliveryByToken(ctx context.Context, token string) (Trackin
 	d.Stops = []TrackingStop{}
 	for stopRows.Next() {
 		var s TrackingStop
+		var name *string
+		var at *time.Time
+		var photo, sig *bool
 		if err := stopRows.Scan(&s.Sequence, &s.StopType, &s.Address,
-			&s.Lng, &s.Lat, &s.Status, &s.ArrivedAt); err != nil {
+			&s.Lng, &s.Lat, &s.Status, &s.ArrivedAt, &name, &at, &photo, &sig); err != nil {
 			return d, err
+		}
+		if name != nil {
+			s.Proof = &TrackingProof{ReceiverName: *name, CapturedAt: *at, HasPhoto: *photo, HasSignature: *sig}
 		}
 		d.Stops = append(d.Stops, s)
 	}

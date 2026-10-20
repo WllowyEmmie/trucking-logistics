@@ -22,7 +22,7 @@ func (s *Server) positionsSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Websockets are not subject to same-origin policy, so without this
 		// any page on the internet could open one against this API.
-		OriginPatterns: []string{"localhost:3000", "localhost:3471"},
+		OriginPatterns: s.cfg.OriginHosts(),
 	})
 	if err != nil {
 		s.logger.Warn("ws upgrade failed", "err", err)
@@ -30,15 +30,20 @@ func (s *Server) positionsSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 
-	// The connection outlives the request handler's usual lifetime, but
-	// r.Context() is still the right parent: it cancels if the server shuts
-	// down.
-	ctx := r.Context()
+	// Nothing is expected from the client. CloseRead reads (and discards)
+	// in the background so close frames and pings are handled, and cancels
+	// ctx as soon as the client goes away, which ends the loop below.
+	ctx := conn.CloseRead(r.Context())
 
 	c := &wsClient{send: make(chan wsMessage, sendBuffer)}
 
-	// Snapshot before registering, so the client can't miss an update that
-	// lands between the two.
+	// Register before the snapshot, so an update that lands between the two
+	// waits in c.send and is written after the snapshot. The other order
+	// loses it: the snapshot is already old and the update was sent to
+	// everyone else.
+	s.hub.add(c)
+	defer s.hub.remove(c)
+
 	snap, err := s.snapshot(ctx)
 	if err != nil {
 		s.logger.Error("ws snapshot", "err", err)
@@ -46,24 +51,9 @@ func (s *Server) positionsSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.hub.add(c)
-	defer s.hub.remove(c)
-
 	if err := writeJSONFrame(ctx, conn, snap); err != nil {
 		return
 	}
-
-	// Reading is what detects a closed connection, so it needs its own
-	// goroutine. Nothing is expected from the client — the read is purely
-	// for the close frame and for protocol-level errors.
-	go func() {
-		for {
-			if _, _, err := conn.Read(ctx); err != nil {
-				conn.CloseNow()
-				return
-			}
-		}
-	}()
 
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()

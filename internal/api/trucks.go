@@ -25,7 +25,7 @@ func (s *Server) listTrucks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not list trucks"})
 		return
 	}
-	writeJSON(w, http.StatusOK, trucks)
+	writeJSON(w, http.StatusOK, onlyMine(r, trucks, func(p *principal, t db.TruckWithPosition) bool { return p.ownsTruck(t.ID) }))
 }
 
 func (s *Server) createTruck(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +120,13 @@ func (s *Server) updateTruck(w http.ResponseWriter, r *http.Request) {
 	if body.Status != nil && truck.Status == "on_delivery" && *body.Status != "on_delivery" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "truck " + truck.PlateNumber + " is on a delivery; cancel or complete it first",
+		})
+		return
+	}
+	// Its delivery would be left with no one to drive it.
+	if clearDriver && truck.Status == "on_delivery" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "truck " + truck.PlateNumber + " is on a delivery; it can't lose its driver until the delivery is done or cancelled",
 		})
 		return
 	}
