@@ -71,6 +71,10 @@ func TestSupervisorPairsAndAssigns(t *testing.T) {
 		t.Fatalf("auto mode off: %d, want 409", got)
 	}
 	e.autoMode(true)
+	// Signing in started Musa's shift; off shift, he gets nothing.
+	if err := dc.Post(ctx, "/auth/me/shift", map[string]bool{"on": false}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if got := status(pair(musa.ID, truck.ID)); got != 409 {
 		t.Fatalf("driver off shift: %d, want 409", got)
 	}
@@ -188,5 +192,27 @@ func TestDispatchShiftStartIsOptIn(t *testing.T) {
 	e.s.cfg.AllowDispatchShiftStart = true
 	if err := e.c.Post(ctx, "/drivers/"+d.ID+"/shift/start", nil, nil); err != nil {
 		t.Fatalf("allowed: %v", err)
+	}
+}
+
+// Signing in to the driver app starts the shift, and says so in the answer.
+func TestDriverSignInStartsShift(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	d, err := e.c.CreateDriver(ctx, "Tobi", "+2348030000103")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.SetDriverPIN(ctx, d.ID, "4821"); err != nil {
+		t.Fatal(err)
+	}
+	var me struct {
+		OnShift *bool `json:"on_shift"`
+	}
+	if err := client.New(e.srv.URL).Post(ctx, "/auth/driver-login", map[string]string{"phone": "+2348030000103", "pin": "4821"}, &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.OnShift == nil || !*me.OnShift {
+		t.Fatalf("sign-in answer: %+v, want on shift", me)
 	}
 }

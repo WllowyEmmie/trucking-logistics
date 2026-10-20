@@ -26,10 +26,17 @@ func TestShiftsGateGPS(t *testing.T) {
 	ctx := context.Background()
 	dc, truck, me := e.newDriver(t, "Bayo", "+234 803 000 0011", "KF-20")
 
+	// Signing in started the shift; end it to see positions refused.
+	var sh shiftResponse
+	if err := dc.Get(ctx, "/auth/me", &sh); err != nil || !sh.OnShift {
+		t.Fatalf("signed in but not on shift: %+v %v", sh, err)
+	}
+	if err := dc.Post(ctx, "/auth/me/shift", map[string]bool{"on": false}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if got := status(dc.PostLocations(ctx, truck.ID, ping())); got != 409 {
 		t.Fatalf("position off shift: %d, want 409", got)
 	}
-	var sh shiftResponse
 	if err := dc.Post(ctx, "/auth/me/shift", map[string]bool{"on": true}, &sh); err != nil || !sh.OnShift || sh.Since == nil {
 		t.Fatalf("start shift: %+v %v", sh, err)
 	}

@@ -316,7 +316,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.logins.clear(acct)
 	s.loginsDay.clear(acct)
 	s.startSession(w, r, roleDispatcher, d.ID, s.cfg.DispatcherSessionTTL,
-		&principal{Role: roleDispatcher, ID: d.ID, Name: d.Name, Email: d.Email})
+		meOf(&principal{Role: roleDispatcher, ID: d.ID, Name: d.Name, Email: d.Email}))
 }
 
 const badDriverLogin = "wrong phone number or PIN"
@@ -356,11 +356,21 @@ func (s *Server) driverLogin(w http.ResponseWriter, r *http.Request) {
 		s.respondErr(w, err, "driver trucks", "could not sign in")
 		return
 	}
-	s.startSession(w, r, roleDriver, d.ID, s.cfg.DriverSessionTTL,
-		&principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks})
+	// Signing in to the app starts the shift: a driver opens it to go to
+	// work. They end it in the app (or dispatch does) when they're done.
+	since, err := s.queries.StartShift(r.Context(), d.ID)
+	if err != nil {
+		s.respondErr(w, err, "start shift", "could not sign in")
+		return
+	}
+	// The app takes this as who's signed in, so it says they're on shift.
+	m := meOf(&principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks})
+	on := true
+	m.OnShift, m.ShiftSince = &on, &since
+	s.startSession(w, r, roleDriver, d.ID, s.cfg.DriverSessionTTL, m)
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, role string, subject uuid.UUID, ttl time.Duration, p *principal) {
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, role string, subject uuid.UUID, ttl time.Duration, me meResponse) {
 	token, hash, err := auth.NewToken()
 	if err != nil {
 		s.respondErr(w, err, "new token", "could not sign in")
@@ -380,7 +390,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, role strin
 		Secure:   s.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	writeJSON(w, http.StatusOK, meOf(p))
+	writeJSON(w, http.StatusOK, me)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
