@@ -33,3 +33,9 @@ services:
       # Lets the simulator put drivers on shift. Leave false with real drivers.
       - key: ALLOW_DISPATCH_SHIFT_START
         value: "false"
+      # Online booking payments: Paystack secret key (sk_test_… to try it).
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      # Where Paystack sends customers back; defaults to CORS_ORIGINS' first entry.
+      - key: PUBLIC_SITE_URL
+        sync: false

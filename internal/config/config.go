@@ -53,6 +53,14 @@ type Config struct {
 	// AGENT_INTERNAL_URL: where the agent listens when it runs on the same
 	// host (e.g. http://127.0.0.1:8200); the API then serves it at /agent.
 	AgentInternalURL string
+	// PAYSTACK_SECRET_KEY: takes payment on the booking page (sk_test_… to
+	// try it, sk_live_… for real). Empty: the page quotes but can't take
+	// bookings. PAYSTACK_URL is for tests.
+	PaystackSecretKey string
+	PaystackURL       string
+	// PUBLIC_SITE_URL: the website's address, where Paystack sends the
+	// customer back after paying. Defaults to the first CORS_ORIGINS entry.
+	PublicSiteURL string
 	// How long a sign-in lasts.
 	DispatcherSessionTTL time.Duration
 	DriverSessionTTL     time.Duration
@@ -88,6 +96,12 @@ func Load(logger *slog.Logger) (*Config, error) {
 	cfg.CookieSecure = env("COOKIE_SECURE", "true") != "false"
 	cfg.AllowDispatchShiftStart = env("ALLOW_DISPATCH_SHIFT_START", "false") == "true"
 	cfg.AgentInternalURL = os.Getenv("AGENT_INTERNAL_URL")
+	cfg.PaystackSecretKey = os.Getenv("PAYSTACK_SECRET_KEY")
+	cfg.PaystackURL = strings.TrimRight(env("PAYSTACK_URL", "https://api.paystack.co"), "/")
+	cfg.PublicSiteURL = strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/")
+	if cfg.PublicSiteURL == "" && len(cfg.AllowedOrigins) > 0 {
+		cfg.PublicSiteURL = strings.TrimRight(cfg.AllowedOrigins[0], "/")
+	}
 	var err error
 	if cfg.DispatcherSessionTTL, err = envDuration("DISPATCHER_SESSION_TTL", 12*time.Hour); err != nil {
 		return nil, err

@@ -60,6 +60,14 @@ Make a free HTTP monitor (UptimeRobot or cron-job.org) on `https://<your-service
 4. Ask the agent a question in the console. If it says the agent isn't running, check Render's logs for `supervisor: listening for changes`.
 5. On a phone, open the driver app and sign in: the shift starts and GPS asks for permission (needs the https address).
 
+## 7. Online booking (Paystack)
+
+1. Sign up at paystack.com (free; test mode works before your business is verified). In **Settings → API Keys & Webhooks**, copy the **test secret key** (`sk_test_…`).
+2. Render → Environment: set `PAYSTACK_SECRET_KEY` to it, and `PUBLIC_SITE_URL` to the website address (`https://…vercel.app`).
+3. In Paystack, set the **test webhook URL** to `https://<your-service>.onrender.com/paystack/webhook`. (The customer's return also confirms payment; the webhook covers people who close the tab.)
+4. Console → Settings → **Website and booking**: turn on Online booking, set the dispatch email and prices.
+5. Try it at `/book` with Paystack's test card. Going live needs your business verified on Paystack and the live keys (`sk_live_…`) in place of the test ones.
+
 ## If something fails
 
 - **Render logs** show the migration output, the agent's lines (`supervisor: …`, `tick: …`) and the API's requests.

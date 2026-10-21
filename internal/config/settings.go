@@ -69,6 +69,15 @@ type Settings struct {
 	// pickup if there is one, otherwise the nearest anywhere.
 	AutoAssign   bool    `json:"auto_assign"`
 	AutoRadiusKm float64 `json:"auto_radius_km"`
+
+	// The public website: the booking page and how customers reach dispatch.
+	// Prices are in naira: base fee + per km of the estimated road
+	// distance, never below the minimum. Paying needs PAYSTACK_SECRET_KEY.
+	BookingEnabled bool   `json:"booking_enabled"`
+	DispatchEmail  string `json:"dispatch_email"`
+	PriceBase      int    `json:"price_base"`
+	PricePerKm     int    `json:"price_per_km"`
+	PriceMinimum   int    `json:"price_minimum"`
 }
 
 type FAQItem struct {
@@ -110,6 +119,9 @@ func (c *Config) DefaultSettings() Settings {
 		CustomerTerms:        DefaultTerms,
 		CustomerFAQ:          DefaultFAQ(),
 		AutoRadiusKm:         2,
+		PriceBase:            5000,
+		PricePerKm:           400,
+		PriceMinimum:         10000,
 	}
 }
 
@@ -117,6 +129,7 @@ var (
 	languageRE = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 	countryRE  = regexp.MustCompile(`^[A-Z]{2}$`)
 	phoneRE    = regexp.MustCompile(`^\+[0-9]{7,15}$`)
+	emailRE    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 )
 
 // Validate reports the first problem, worded for the person who typed it.
@@ -124,6 +137,7 @@ func (s *Settings) Validate() error {
 	s.OperatorName = strings.TrimSpace(s.OperatorName)
 	s.SupportPhone = strings.TrimSpace(s.SupportPhone)
 	s.DispatchPhone = strings.TrimSpace(s.DispatchPhone)
+	s.DispatchEmail = strings.TrimSpace(s.DispatchEmail)
 	switch {
 	case s.Country != "" && !countryRE.MatchString(s.Country):
 		return errors.New("country must be a two-letter code like NG")
@@ -167,6 +181,12 @@ func (s *Settings) Validate() error {
 		return errors.New("20 questions at most")
 	case s.AutoRadiusKm < 0.1 || s.AutoRadiusKm > 100:
 		return errors.New("the auto mode distance must be 0.1 to 100 km")
+	case s.DispatchEmail != "" && !emailRE.MatchString(s.DispatchEmail):
+		return errors.New("the dispatch email doesn't look like an email address")
+	case s.PriceBase < 0 || s.PricePerKm < 0 || s.PriceMinimum < 0 || s.PriceBase > 10_000_000 || s.PricePerKm > 1_000_000 || s.PriceMinimum > 10_000_000:
+		return errors.New("prices must be between 0 and 10,000,000")
+	case s.BookingEnabled && s.PriceBase+s.PricePerKm+s.PriceMinimum == 0:
+		return errors.New("online booking needs a price: set a base fee, a rate per km or a minimum")
 	}
 	for i := range s.CustomerFAQ {
 		f := &s.CustomerFAQ[i]

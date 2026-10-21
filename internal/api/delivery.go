@@ -577,13 +577,6 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := newTrackingToken()
-	if err != nil {
-		s.logger.Error("generate token", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create delivery"})
-		return
-	}
-
 	tx, err := s.pool.Begin(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
@@ -592,53 +585,9 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	qtx := s.queries.WithTx(tx)
-
-	delivery, err := qtx.CreateDelivery(r.Context(), db.CreateDeliveryParams{
-		TrackingToken: token,
-		CustomerName:  body.CustomerName,
-		CustomerPhone: body.CustomerPhone,
-		GoodsDesc:     body.GoodsDesc,
-	})
+	delivery, stops, err := s.insertDelivery(r.Context(), s.queries.WithTx(tx), body, "")
 	if err != nil {
-		s.logger.Error("create delivery", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create delivery"})
-		return
-	}
-
-	stops := make([]db.CreateDeliveryStopRow, 0, len(body.Stops))
-	for i, in := range body.Stops {
-		stop, err := qtx.CreateDeliveryStop(r.Context(), db.CreateDeliveryStopParams{
-			DeliveryID:   delivery.ID,
-			Sequence:     int32(i + 1),
-			StopType:     in.StopType,
-			Address:      in.Address,
-			Lng:          *in.Lng,
-			Lat:          *in.Lat,
-			ContactName:  in.ContactName,
-			ContactPhone: in.ContactPhone,
-		})
-		if err != nil {
-			s.logger.Error("create stop", "err", err, "sequence", i+1)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create delivery"})
-			return
-		}
-		stops = append(stops, stop)
-	}
-
-	if body.DueBy != nil {
-		if _, err := qtx.SetDueBy(r.Context(), delivery.ID, body.DueBy); err != nil {
-			s.respondErr(w, err, "set due", "could not create delivery")
-			return
-		}
-	}
-
-	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
-		DeliveryID: delivery.ID,
-		EventType:  "created",
-	}); err != nil {
-		s.logger.Error("create event", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create delivery"})
+		s.respondErr(w, err, "create delivery", "could not create delivery")
 		return
 	}
 
@@ -653,6 +602,60 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		"stops":    stops,
 	})
 }
+
+// insertDelivery writes a checked delivery, its stops, its due time and its
+// "created" event in the caller's transaction. note goes on the event (e.g.
+// "booked online").
+func (s *Server) insertDelivery(ctx context.Context, qtx *db.Queries, body createDeliveryInput, note string) (db.CreateDeliveryRow, []db.CreateDeliveryStopRow, error) {
+	token, err := newTrackingToken()
+	if err != nil {
+		return db.CreateDeliveryRow{}, nil, err
+	}
+	delivery, err := qtx.CreateDelivery(ctx, db.CreateDeliveryParams{
+		TrackingToken: token,
+		CustomerName:  body.CustomerName,
+		CustomerPhone: body.CustomerPhone,
+		GoodsDesc:     body.GoodsDesc,
+	})
+	if err != nil {
+		return delivery, nil, err
+	}
+	stops := make([]db.CreateDeliveryStopRow, 0, len(body.Stops))
+	for i, in := range body.Stops {
+		stop, err := qtx.CreateDeliveryStop(ctx, db.CreateDeliveryStopParams{
+			DeliveryID:   delivery.ID,
+			Sequence:     int32(i + 1),
+			StopType:     in.StopType,
+			Address:      in.Address,
+			Lng:          *in.Lng,
+			Lat:          *in.Lat,
+			ContactName:  in.ContactName,
+			ContactPhone: in.ContactPhone,
+		})
+		if err != nil {
+			return delivery, nil, err
+		}
+		stops = append(stops, stop)
+	}
+	if body.DueBy != nil {
+		if _, err := qtx.SetDueBy(ctx, delivery.ID, body.DueBy); err != nil {
+			return delivery, nil, err
+		}
+	}
+	var n *string
+	if note != "" {
+		n = &note
+	}
+	if err := qtx.CreateDeliveryEvent(ctx, db.CreateDeliveryEventParams{
+		DeliveryID: delivery.ID,
+		EventType:  "created",
+		Note:       n,
+	}); err != nil {
+		return delivery, nil, err
+	}
+	return delivery, stops, nil
+}
+
 func (s *Server) getDelivery(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
