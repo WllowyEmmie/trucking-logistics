@@ -50,7 +50,13 @@ type sim struct {
 	runs    map[string]*run // by delivery id
 	at      map[string]position
 	returns map[string]*homeward // by truck id: on the way back to the depot
+	// When each parked truck last reported (see heartbeat).
+	parkedAt map[string]time.Time
 }
+
+// A driver's phone on shift keeps reporting while the truck is parked, so
+// dispatch doesn't see it as silent. The simulator does the same, this often.
+const parkedEvery = 60 * time.Second
 
 // homeward is a truck driving back to the depot after a delivery.
 type homeward struct {
@@ -115,6 +121,8 @@ func (s *sim) scan(ctx context.Context) ([]work, error) {
 			delete(s.returns, *d.TruckID)
 		}
 	}
+	s.heartbeat(ctx, trucks, out)
+
 	// Forget deliveries that finished, were cancelled, or moved off our trucks.
 	for id := range s.runs {
 		if !live[id] {
@@ -243,6 +251,45 @@ func (s *sim) step(ctx context.Context, w work) error {
 		return nil
 	}
 	return nil
+}
+
+// heartbeat reports where each parked truck is, for trucks whose driver is
+// on shift and that aren't on a delivery or driving back to the depot.
+func (s *sim) heartbeat(ctx context.Context, trucks []client.Truck, busy []work) {
+	if s.parkedAt == nil {
+		s.parkedAt = map[string]time.Time{}
+	}
+	moving := map[string]bool{}
+	for _, w := range busy {
+		if w.d.TruckID != nil {
+			moving[*w.d.TruckID] = true
+		}
+	}
+	now := s.now()
+	for _, t := range trucks {
+		if t.Status != "available" || t.DriverID == nil || !t.DriverOnShift || moving[t.ID] || s.returns[t.ID] != nil {
+			continue
+		}
+		if len(s.plates) > 0 && !s.plates[t.PlateNumber] {
+			continue
+		}
+		if now.Sub(s.parkedAt[t.ID]) < parkedEvery {
+			continue
+		}
+		pos, ok := s.at[t.ID]
+		if !ok {
+			if t.Lat == nil || t.Lng == nil {
+				pos = s.home
+			} else {
+				pos = position{Lat: *t.Lat, Lng: *t.Lng}
+			}
+		}
+		s.parkedAt[t.ID] = now
+		s.at[t.ID] = pos
+		if err := s.report(ctx, t.ID, pos, 0); err != nil {
+			log.Printf("%s: %v", t.PlateNumber, err)
+		}
+	}
 }
 
 // goHome sends a truck that has finished back to the depot.

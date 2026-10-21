@@ -25,6 +25,10 @@ type fakeAPI struct {
 	pings   []client.Ping
 	calls   []string
 	truckAt *[2]float64
+	// A second truck, parked, its driver on shift.
+	parked bool
+	// Truck id of each position posted.
+	pingTrucks []string
 }
 
 func newFakeAPI() *fakeAPI {
@@ -47,7 +51,11 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conflict := func(msg string) { w.WriteHeader(http.StatusConflict); fmt.Fprintf(w, `{"error":%q}`, msg) }
 	switch {
 	case p == "/trucks":
-		json.NewEncoder(w).Encode([]map[string]any{{"id": "t1", "plate_number": "KF-01", "status": "on_delivery"}})
+		ts := []map[string]any{{"id": "t1", "plate_number": "KF-01", "status": "on_delivery", "driver_id": "dr1", "driver_on_shift": true}}
+		if f.parked {
+			ts = append(ts, map[string]any{"id": "t2", "plate_number": "KF-02", "status": "available", "driver_id": "dr2", "driver_on_shift": true, "lat": 6.5, "lng": 3.4})
+		}
+		json.NewEncoder(w).Encode(ts)
 	case p == "/deliveries":
 		var out []map[string]any
 		if r.URL.Query().Get("status") == f.status {
@@ -89,9 +97,14 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.status = "failed"
 	case p == "/locations":
 		var b struct {
-			Pings []client.Ping `json:"pings"`
+			TruckID string        `json:"truck_id"`
+			Pings   []client.Ping `json:"pings"`
 		}
 		json.NewDecoder(r.Body).Decode(&b)
+		if b.TruckID == "t2" {
+			f.pingTrucks = append(f.pingTrucks, b.TruckID)
+			break
+		}
 		f.pings = append(f.pings, b.Pings...)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"accepted":1}`))
@@ -303,5 +316,27 @@ func TestNewDeliveryCancelsTheTripBack(t *testing.T) {
 	}
 	if s.returns["t1"] != nil {
 		t.Fatal("still heading back with a new delivery")
+	}
+}
+
+// A parked truck whose driver is on shift reports now and then, like a
+// phone would, and the truck on a delivery isn't sent a parked position.
+func TestParkedTrucksReport(t *testing.T) {
+	f, clk := newFakeAPI(), &clock{t: time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)}
+	f.parked = true
+	s := newSim(t, f, clk, 0)
+	for i := 0; i < 3; i++ { // 3 scans 10 s apart: one report
+		if _, err := s.scan(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		clk.t = clk.t.Add(10 * time.Second)
+	}
+	if len(f.pingTrucks) != 1 {
+		t.Fatalf("parked reports: %d, want 1", len(f.pingTrucks))
+	}
+	clk.t = clk.t.Add(parkedEvery)
+	s.scan(context.Background())
+	if len(f.pingTrucks) != 2 {
+		t.Fatalf("after a minute: %d, want 2", len(f.pingTrucks))
 	}
 }
