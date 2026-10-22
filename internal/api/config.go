@@ -38,6 +38,10 @@ func (s *Server) loadSettings(ctx context.Context) {
 		}
 	}
 	s.settings.Store(&def)
+	if def.Global() {
+		s.logger.Warn("no service area set: addresses anywhere are accepted",
+			"hint", "set it on the console's Settings page (or SERVICE_MIN_LAT/MAX_LAT/MIN_LNG/MAX_LNG for the default)")
+	}
 }
 
 type configResponse struct {

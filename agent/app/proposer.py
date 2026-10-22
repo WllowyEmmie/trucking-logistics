@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from langchain_core.messages import HumanMessage
 
 from .client import APIError
+from .schema import ProposedAssignment
 from .timefmt import duration
 from .tools import api
 
@@ -122,14 +123,17 @@ async def run_tick(graph, include_pending: bool = True) -> dict:
         return {"status": "idle", "reason": idle or "no failed delivery has a truck to send"}
 
     table = "\n\n".join(x for x in (_table(rows, now) if rows else "", _failed_table(failed_rows, now)) if x)
+    decided_by = "model"
     try:
         result = await graph.ainvoke({"messages": [HumanMessage(table)], "result": None})
+        proposals = result["result"].proposals if result["result"] else []
     except Exception as e:
-        # The model timed out, or its answer didn't parse into TickOutput.
-        # Nothing was written; the next tick starts clean.
-        log.warning("tick: model pass failed: %r", e)
-        return {"status": "error", "error": f"model pass failed: {type(e).__name__}"}
-    proposals = result["result"].proposals if result["result"] else []
+        # The model timed out, or its answer didn't fit TickOutput twice.
+        # Proposals are only suggestions the dispatcher reviews, so the
+        # nearest-truck rule stands in rather than leaving the tick empty.
+        log.warning("tick: model pass failed, using the nearest-truck rule: %r", e)
+        proposals = rule_proposals(rows, failed_rows, now)
+        decided_by = "rule"
 
     picks, dropped = _resolve(proposals, rows, failed_rows, free)
     kept, invalid = _validate(picks, pending, failed, available, existing)
@@ -152,7 +156,37 @@ async def run_tick(graph, include_pending: bool = True) -> dict:
         "proposed": len(written),
         "dropped": len(dropped),
         "ids": written,
+        "decided_by": decided_by,
     }
+
+
+def rule_proposals(rows, failed_rows: list[FailedRow], now: datetime) -> list[ProposedAssignment]:
+    """What the model would be asked for, by rule: oldest delivery first, each
+    takes the nearest truck on its row that nobody has taken yet. Failed
+    deliveries first: their goods are sitting on a truck."""
+    taken: set[str] = set()
+    out: list[ProposedAssignment] = []
+    for f in failed_rows:
+        t = next((t for t in f.near if t["id"] not in taken), None)
+        if t is None:
+            continue
+        taken.add(t["id"])
+        _mode, title, _what = PLANS[f.plan]
+        out.append(ProposedAssignment(
+            delivery=f.d["reference"], truck=t["plate_number"],
+            why=f"{title}: {t['plate_number']} is the nearest free truck (by rule; the model was unavailable).",
+        ))
+    for d, pickup, near in rows:
+        t = next((t for t in near if t["id"] not in taken), None)
+        if t is None:
+            continue
+        taken.add(t["id"])
+        out.append(ProposedAssignment(
+            delivery=d["reference"], truck=t["plate_number"],
+            why=f"{_km(t, pickup):.1f} km from the pickup, waiting {_ago(d['created_at'], now)} "
+                f"(nearest truck, by rule; the model was unavailable).",
+        ))
+    return out
 
 
 async def _pending_rows(pending, claimed, placed, declined, now):

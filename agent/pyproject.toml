@@ -6,6 +6,8 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "httpx>=0.28",
+    # The supervisor's live-updates socket (app/main.py: _ws_connect).
+    "websockets>=14",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "langgraph>=1.0",

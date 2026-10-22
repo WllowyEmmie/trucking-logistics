@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/WllowyEmmie/trucking-logistics/internal/client"
 )
@@ -176,5 +177,47 @@ func TestIdempotencyKey(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 200 || res.Header.Get(headerReplayed) != "true" {
 		t.Fatalf("replay: %d %q", res.StatusCode, res.Header.Get(headerReplayed))
+	}
+}
+
+// A signed-in caller over their limit gets 429 rate_limited with
+// Retry-After; others are unaffected.
+func TestStaffRateLimit(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	e.s.limits.read[roleDispatcher] = limit{per: 60, burst: 3}
+
+	for i := 0; i < 3; i++ {
+		if _, err := e.c.ListTrucks(ctx); err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+	}
+	ae := apiErr(t, func() error { _, err := e.c.ListTrucks(ctx); return err }())
+	if ae.Status != 429 || ae.Code != "rate_limited" {
+		t.Fatalf("over the limit: %d %q", ae.Status, ae.Code)
+	}
+	// Writes have their own bucket; the agent its own.
+	if _, err := e.c.CreateTruck(ctx, "KF-50", nil); err != nil {
+		t.Fatalf("write after reads ran out: %v", err)
+	}
+	agent := client.New(e.srv.URL).WithToken(e.agentKey)
+	if err := agent.Get(ctx, "/trucks", nil); err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+}
+
+func TestLimiterRefills(t *testing.T) {
+	l := newLimiter()
+	lim := limit{per: 60, burst: 1} // one a second
+	now := time.Now()
+	if ok, _ := l.take("k", lim, now); !ok {
+		t.Fatal("first")
+	}
+	ok, wait := l.take("k", lim, now)
+	if ok || wait <= 0 || wait > time.Second {
+		t.Fatalf("second: ok=%v wait=%v", ok, wait)
+	}
+	if ok, _ := l.take("k", lim, now.Add(1100*time.Millisecond)); !ok {
+		t.Fatal("after a second")
 	}
 }

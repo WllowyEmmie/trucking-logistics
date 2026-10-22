@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # agent/.env, wherever the process is started from. Real environment
@@ -19,7 +20,9 @@ class Settings(BaseSettings):
 
     model: str = "deepseek/deepseek-v4.1-flash"
     model_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_api_key: str
+    # SecretStr: shown as ********** if settings are ever printed or logged,
+    # and the type ChatOpenAI's api_key expects.
+    openrouter_api_key: SecretStr
     # The service key the Go API knows the agent by (AGENT_API_KEY there).
     # Also what POST /tick here requires. Required: without it nothing works.
     agent_api_key: str

@@ -29,12 +29,14 @@ from langchain.agents.middleware import (
     dynamic_prompt,
 )
 
+from ..prompts import load as load_prompt
 from .context import CopilotContext
 from .tools import ALL_TOOLS, DESTRUCTIVE_TOOLS, WRITE_TOOLS
 
-PROMPT_FILE = Path(__file__).parent / "prompts" / "system.md"
-PROMPT_VERSION = "copilot-system-v1"  # logged with every run; bump when the prompt changes
-SYSTEM_PROMPT = PROMPT_FILE.read_text(encoding="utf-8")
+# Versioned by content (app/prompts): logged and traced with every run.
+PROMPT = load_prompt("system", Path(__file__).parent / "prompts")
+PROMPT_VERSION = PROMPT.version
+SYSTEM_PROMPT = PROMPT.text
 
 MODEL_CALLS_PER_TURN = 12
 TOOL_CALLS_PER_TURN = 25

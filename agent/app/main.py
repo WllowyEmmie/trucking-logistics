@@ -20,6 +20,7 @@ from .copilot import dispatcher_api as copilot_http
 from .copilot.agent import build_copilot
 from .copilot.checkpoint import open_checkpointer
 from .graph import build_ask_graph, build_proposal_graph, build_supervisor_decider
+from .prompts import ASK
 from .proposer import run_tick
 from .supervisor import run_supervisor
 from .tools import api
@@ -65,7 +66,7 @@ tick_lock = asyncio.Lock()
 def _outcome(result: dict) -> str:
     status = result.get("status")
     if status == "ok":
-        return f"proposed {result['proposed']}, dropped {result['dropped']}"
+        return f"proposed {result['proposed']}, dropped {result['dropped']} (by {result.get('decided_by', 'model')})"
     if status == "idle":
         return f"idle: {result['reason']}"
     return f"{status}: {result.get('error') or result.get('reason')}"
@@ -154,14 +155,17 @@ def _ws_url() -> str:
 
 
 def _ws_connect():
-    import websockets  # comes with uvicorn[standard]
-
-    headers = {"Authorization": f"Bearer {settings.agent_api_key}"}
-    major = int(websockets.__version__.split(".")[0])
-    # 14 renamed the header option. The first frame is a snapshot of every
+    # websockets 14+ (pinned in pyproject.toml): the asyncio client and its
+    # additional_headers option. The first frame is a snapshot of every
     # truck, so allow a big one.
-    key = "additional_headers" if major >= 14 else "extra_headers"
-    return websockets.connect(_ws_url(), open_timeout=10, max_size=16 * 2**20, **{key: headers})
+    from websockets.asyncio.client import connect
+
+    return connect(
+        _ws_url(),
+        additional_headers={"Authorization": f"Bearer {settings.agent_api_key}"},
+        open_timeout=10,
+        max_size=16 * 2**20,
+    )
 
 
 async def listen() -> None:
@@ -270,6 +274,7 @@ async def health():
 async def ask(req: AskRequest, _me: dict = Depends(require_dispatcher)) -> AskResponse:
     if not await agent_enabled():
         raise HTTPException(503, detail="The agent is turned off in Settings.")
+    logging.getLogger("app.ask").info("ask: prompt=%s", ASK.version)
     try:
         # recursion_limit caps the tool loop (two steps per round), so a
         # model that keeps calling tools can't run up the bill.

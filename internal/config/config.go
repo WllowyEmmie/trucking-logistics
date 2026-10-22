@@ -147,10 +147,8 @@ func Load(logger *slog.Logger) (*Config, error) {
 		return nil, fmt.Errorf("SERVICE_MIN_LNG (%v) must be less than SERVICE_MAX_LNG (%v)", cfg.MinLng, cfg.MaxLng)
 	}
 
-	if os.Getenv("SERVICE_MIN_LAT") == "" {
-		logger.Warn("no service area configured; coordinate validation is effectively global",
-			"hint", "set SERVICE_MIN_LAT, SERVICE_MAX_LAT, SERVICE_MIN_LNG, SERVICE_MAX_LNG")
-	}
+	// Whether a service area is set is checked once the saved Settings are
+	// loaded (api.loadSettings): those win over these defaults.
 
 	return cfg, nil
 }

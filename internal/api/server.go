@@ -33,6 +33,10 @@ type Server struct {
 	bookGeoLimit   *throttle
 	bookGeoGlobal  *throttle
 
+	// Requests per minute for signed-in callers (ratelimit.go).
+	limits  staffLimits
+	limiter *limiter
+
 	// The settings in effect (see config.go), swapped whole on save.
 	settings   atomic.Pointer[config.Settings]
 	settingsAt atomic.Pointer[time.Time]
@@ -56,6 +60,9 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger, cfg *config.Config) *Ser
 		bookQuoteLimit: newThrottle(60, 10*time.Minute),
 		bookGeoLimit:   newThrottle(30, 10*time.Minute),
 		bookGeoGlobal:  newThrottle(50, time.Minute),
+
+		limits:  defaultStaffLimits(),
+		limiter: newLimiter(),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

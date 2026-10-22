@@ -82,6 +82,8 @@ func setup(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	s := NewServer(pool, logger, cfg)
+	// Tests fire hundreds of requests a second; TestStaffRateLimit sets its own.
+	s.limits = staffLimits{read: map[string]limit{}, write: map[string]limit{}, ping: map[string]limit{}}
 	srv := httptest.NewServer(s.Routes())
 	t.Cleanup(srv.Close)
 

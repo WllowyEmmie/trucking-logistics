@@ -55,12 +55,15 @@ func (s *Server) Routes() http.Handler {
 
 	router.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
+		// Per-person request limits for signed-in callers (ratelimit.go).
+		r.Use(s.staffRateLimit)
 		// A change sent again with the same Idempotency-Key gets the first
 		// response back instead of running twice (idempotency.go).
 		r.Use(s.idempotent)
 
 		// Public: no sign-in.
 		r.Get("/health", s.health)
+		r.Get("/openapi.json", s.openAPI)
 		r.Get("/config", s.getConfig)
 		r.Get("/track/{token}", s.trackDelivery)
 		r.Get("/track/{token}/stops/{seq}/{kind}", s.trackProofImage)
