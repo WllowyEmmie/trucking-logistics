@@ -81,7 +81,7 @@ func (s *Server) saveProof(w http.ResponseWriter, r *http.Request) {
 		captured = *body.CapturedAt
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.respondErr(w, err, "begin tx", "could not save the proof")
 		return

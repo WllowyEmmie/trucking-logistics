@@ -67,7 +67,7 @@ func setup(t *testing.T) *env {
 	}
 	t.Cleanup(pool.Close)
 	if _, err := pool.Exec(ctx, `TRUNCATE locations, delivery_events, delivery_stops, deliveries,
-		trucks, drivers, proposals, sessions, dispatchers, settings RESTART IDENTITY CASCADE`); err != nil {
+		trucks, drivers, proposals, sessions, dispatchers, settings, idempotency_keys RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 

@@ -59,7 +59,7 @@ func parseID(raw, what string) (uuid.UUID, error) {
 func (s *Server) supervise(w http.ResponseWriter, r *http.Request, op string,
 	fn func(ctx context.Context, qtx *db.Queries, in supervisorInput) (db.SupervisorAction, error)) {
 	if !s.st().AutoAssign {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "auto mode is off in Settings"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "auto mode is off in Settings", "code": codeAutoModeOff})
 		return
 	}
 	var in supervisorInput
@@ -71,7 +71,7 @@ func (s *Server) supervise(w http.ResponseWriter, r *http.Request, op string,
 		s.respondErr(w, err, op, "could not "+op)
 		return
 	}
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.respondErr(w, err, "begin tx", "could not "+op)
 		return
@@ -113,7 +113,7 @@ func (s *Server) supervisorPair(w http.ResponseWriter, r *http.Request) {
 		if since, err := qtx.OpenShift(ctx, driverID); err != nil {
 			return zero, err
 		} else if since == nil {
-			return zero, errConflict(name + " is off shift")
+			return zero, errConflictCode(codeDriverOffShift, name+" is off shift")
 		}
 		if plate, err := qtx.TruckOfDriver(ctx, driverID); err != nil {
 			return zero, err
@@ -128,7 +128,7 @@ func (s *Server) supervisorPair(w http.ResponseWriter, r *http.Request) {
 			return zero, err
 		}
 		if truck.Status != "available" {
-			return zero, errConflict("truck " + truck.PlateNumber + " is " + truck.Status)
+			return zero, errConflictCode(codeTruckBusy, "truck "+truck.PlateNumber+" is "+truck.Status)
 		}
 		if truck.DriverID != nil {
 			return zero, errConflict("truck " + truck.PlateNumber + " already has a driver")
@@ -172,7 +172,7 @@ func (s *Server) supervisorAssign(w http.ResponseWriter, r *http.Request) {
 		if since, err := qtx.OpenShift(ctx, *truck.DriverID); err != nil {
 			return zero, err
 		} else if since == nil {
-			return zero, errConflict("the driver of " + truck.PlateNumber + " is off shift")
+			return zero, errConflictCode(codeDriverOffShift, "the driver of "+truck.PlateNumber+" is off shift")
 		}
 		note := "automatically: " + in.Reason
 		if err := qtx.CreateDeliveryEvent(ctx, db.CreateDeliveryEventParams{
@@ -212,4 +212,4 @@ func (s *Server) supervisorActions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func errBadRequest(msg string) error { return apiError{http.StatusBadRequest, msg} }
+func errBadRequest(msg string) error { return apiError{status: http.StatusBadRequest, message: msg} }

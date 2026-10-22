@@ -48,7 +48,7 @@ func (s *Server) setDue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.respondErr(w, err, "begin tx", "could not set the due time")
 		return
@@ -66,7 +66,7 @@ func (s *Server) setDue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status == "completed" || status == "cancelled" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "delivery is " + status + "; its due time can't change"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "delivery is " + status + "; its due time can't change", "code": codeWrongStatus})
 		return
 	}
 	// The note is the time itself (or empty): clients format it in the

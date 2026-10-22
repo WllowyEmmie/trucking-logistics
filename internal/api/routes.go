@@ -24,7 +24,8 @@ func (s *Server) Routes() http.Handler {
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.AllowedOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "OPTIONS"},
-		AllowedHeaders: []string{"Content-Type", "Authorization"},
+		AllowedHeaders: []string{"Content-Type", "Authorization", headerIdempotencyKey, headerVia, headerThread},
+		ExposedHeaders: []string{headerReplayed},
 		// The browser apps go through Next's same-origin rewrite, so the
 		// session cookie never needs to cross origins.
 		AllowCredentials: false,
@@ -32,6 +33,8 @@ func (s *Server) Routes() http.Handler {
 	}))
 	// Works out who's calling; requireRole below decides what they may do.
 	router.Use(s.authenticate)
+	// Who to record on changes, and through what (attribution.go).
+	router.Use(s.attribute)
 	router.Use(csrfGuard)
 	// After a change, tell the open consoles what changed (live.go).
 	router.Use(s.announceChanges)
@@ -52,6 +55,9 @@ func (s *Server) Routes() http.Handler {
 
 	router.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
+		// A change sent again with the same Idempotency-Key gets the first
+		// response back instead of running twice (idempotency.go).
+		r.Use(s.idempotent)
 
 		// Public: no sign-in.
 		r.Get("/health", s.health)

@@ -30,6 +30,15 @@ class Settings(BaseSettings):
 
     port: int = 8200
 
+    # The Copilot (app/copilot): the console's chat that can make changes.
+    # Its conversations are kept in this database (the API's own; set in the
+    # container). Empty: kept in memory, lost on restart (local development).
+    database_url: str = ""
+    # A cheaper model for summarising long conversations; empty: `model`.
+    copilot_small_model: str = ""
+    # Tried when `model` fails (outage, out of credits); empty: none.
+    copilot_fallback_model: str = ""
+
     # Browser origins allowed to call /ask and /track/{token}/ask,
     # comma-separated. The console's origin in production goes here.
     cors_origins: str = "http://localhost:3000,http://localhost:3471"
@@ -51,4 +60,4 @@ class Settings(BaseSettings):
     customer_questions_per_minute: int = 60  # across all links
 
 
-settings = Settings()
+settings = Settings()

@@ -30,6 +30,9 @@ type DeliveryEvent struct {
 	EventType  string     `json:"event_type"`
 	Note       *string    `json:"note"`
 	CreatedAt  time.Time  `json:"created_at"`
+	Actor      *string    `json:"actor"`
+	Via        *string    `json:"via"`
+	ThreadID   *string    `json:"thread_id"`
 }
 
 type DeliveryStop struct {

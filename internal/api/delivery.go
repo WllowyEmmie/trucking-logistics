@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -91,7 +93,7 @@ func (s *Server) assignTruckTx(
 		return zero, err
 	}
 	if delivery.Status != "pending" {
-		return zero, errConflict("delivery is " + delivery.Status + " and cannot be assigned")
+		return zero, errConflictCode(codeWrongStatus, "delivery is "+delivery.Status+" and cannot be assigned")
 	}
 
 	truck, err := qtx.GetTruckForUpdate(ctx, truckID)
@@ -102,12 +104,12 @@ func (s *Server) assignTruckTx(
 		return zero, err
 	}
 	if truck.Status != "available" {
-		return zero, errConflict("truck " + truck.PlateNumber + " is " + truck.Status)
+		return zero, errConflictCode(codeTruckBusy, "truck "+truck.PlateNumber+" is "+truck.Status)
 	}
 	// Nobody would drive it: the delivery would sit "assigned" with no one
 	// to start it, and no driver app would ever show it.
 	if truck.DriverID == nil {
-		return zero, errConflict("truck " + truck.PlateNumber + " has no driver; give it a driver in Fleet first")
+		return zero, errConflictCode(codeTruckNoDriver, "truck "+truck.PlateNumber+" has no driver; give it a driver in Fleet first")
 	}
 
 	updated, err := qtx.AssignTruck(ctx, db.AssignTruckParams{
@@ -157,7 +159,7 @@ func (s *Server) assignTruck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not assign truck"})
@@ -186,7 +188,7 @@ func (s *Server) startDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery status"})
@@ -207,7 +209,7 @@ func (s *Server) startDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if delivery.Status != "assigned" {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "delivery is " + delivery.Status + " and cannot be set to in_transit",
+			"error": "delivery is " + delivery.Status + " and cannot be set to in_transit", "code": codeWrongStatus,
 		})
 		return
 	}
@@ -250,7 +252,7 @@ func (s *Server) completeDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery and truck status"})
@@ -271,7 +273,7 @@ func (s *Server) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if delivery.Status != "in_transit" {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "delivery is " + delivery.Status + " and cannot be updated to completed",
+			"error": "delivery is " + delivery.Status + " and cannot be updated to completed", "code": codeWrongStatus,
 		})
 		return
 	}
@@ -286,7 +288,7 @@ func (s *Server) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	if open > 0 {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "delivery still has open stops; complete every stop first",
+			"error": "delivery still has open stops; complete every stop first", "code": codeOpenStops,
 		})
 		return
 	}
@@ -374,7 +376,7 @@ func (s *Server) failDelivery(w http.ResponseWriter, r *http.Request) {
 		nextStatus = "maintenance"
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery and truck status"})
@@ -480,8 +482,26 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delivery id"})
 		return
 	}
+	// Optional {"reason": "..."}: why, kept on the cancelled event. The
+	// console sends no body; the Copilot always gives one.
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if len(reason) > 300 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason is too long (300 characters at most)"})
+		return
+	}
+	var note *string
+	if reason != "" {
+		note = &reason
+	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update delivery and truck status"})
@@ -506,7 +526,7 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 	case "pending", "assigned", "in_transit", "failed":
 	default:
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "delivery is " + delivery.Status + " and cannot be cancelled",
+			"error": "delivery is " + delivery.Status + " and cannot be cancelled", "code": codeWrongStatus,
 		})
 		return
 	}
@@ -522,6 +542,7 @@ func (s *Server) cancelDelivery(w http.ResponseWriter, r *http.Request) {
 	if err := qtx.CreateDeliveryEvent(r.Context(), db.CreateDeliveryEventParams{
 		DeliveryID: deliveryID,
 		EventType:  "cancelled",
+		Note:       note,
 	}); err != nil {
 		s.logger.Error("create event", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not cancel delivery"})
@@ -577,7 +598,7 @@ func (s *Server) createDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create delivery"})

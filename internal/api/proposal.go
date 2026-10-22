@@ -199,7 +199,7 @@ func (s *Server) approveProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not approve proposal"})
@@ -219,7 +219,7 @@ func (s *Server) approveProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "proposal is already " + p.Status})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "proposal is already " + p.Status, "code": codeAlreadyDecided})
 		return
 	}
 	if p.Kind != "change" {
@@ -263,7 +263,7 @@ func (s *Server) approveProposal(w http.ResponseWriter, r *http.Request) {
 				if err := s.expireProposal(r.Context(), id, ae.message); err != nil {
 					s.logger.Error("expire proposal", "err", err)
 				}
-				writeJSON(w, http.StatusConflict, map[string]string{"error": ae.message})
+				writeJSON(w, http.StatusConflict, ae.body())
 				return
 			}
 			s.respondErr(w, err, "approve proposal", "could not approve proposal")
@@ -301,7 +301,7 @@ func (s *Server) rejectProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not reject proposal"})
@@ -321,7 +321,7 @@ func (s *Server) rejectProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "proposal is already " + p.Status})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "proposal is already " + p.Status, "code": codeAlreadyDecided})
 		return
 	}
 

@@ -300,7 +300,7 @@ func (s *Server) paystackWebhook(w http.ResponseWriter, r *http.Request) {
 // settleBooking turns a paid booking into a pending delivery, once: the
 // webhook and the customer's return may both get here.
 func (s *Server) settleBooking(ctx context.Context, reference string, paid int64, currency string) (db.Booking, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return db.Booking{}, err
 	}

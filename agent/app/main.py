@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field
 from . import customer
 from .client import APIError
 from .config import settings
+from .copilot import api as copilot_api
+from .copilot import dispatcher_api as copilot_http
+from .copilot.agent import build_copilot
+from .copilot.checkpoint import open_checkpointer
 from .graph import build_ask_graph, build_proposal_graph, build_supervisor_decider
 from .proposer import run_tick
 from .supervisor import run_supervisor
@@ -34,6 +38,19 @@ llm = ChatOpenAI(
     max_retries=settings.model_max_retries,
 )
 
+
+def _model(name: str) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=name,
+        base_url=settings.model_base_url,
+        api_key=settings.openrouter_api_key,
+        timeout=settings.model_timeout_s,
+        max_retries=settings.model_max_retries,
+    )
+
+
+small_llm = _model(settings.copilot_small_model) if settings.copilot_small_model else llm
+fallback_llm = _model(settings.copilot_fallback_model) if settings.copilot_fallback_model else None
 
 ask_graph = build_ask_graph(llm)
 propose_graph = build_proposal_graph(llm)
@@ -173,17 +190,28 @@ async def listen() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = [asyncio.create_task(scheduler()), asyncio.create_task(supervisor_loop()), asyncio.create_task(listen())]
-    yield
-    for t in tasks:
-        t.cancel()
-    for t in tasks:
-        with suppress(asyncio.CancelledError):
-            await t
-    await api.aclose()
+    async with AsyncExitStack() as stack:
+        # The Copilot: its conversations are checkpointed (Postgres in
+        # production), which is what lets a turn wait on an approval.
+        checkpointer = await open_checkpointer(stack)
+        copilot_api.rt.agent = build_copilot(llm, small_llm, checkpointer, fallback_llm)
+        copilot_api.rt.require_dispatcher = require_dispatcher
+        copilot_api.rt.agent_enabled = agent_enabled
+        copilot_api.rt.operator_settings = operator_settings
+
+        tasks = [asyncio.create_task(scheduler()), asyncio.create_task(supervisor_loop()), asyncio.create_task(listen())]
+        yield
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            with suppress(asyncio.CancelledError):
+                await t
+        await api.aclose()
+        await copilot_http.aclose()
 
 
 app = FastAPI(title="Dispatch agent", lifespan=lifespan)
+app.include_router(copilot_api.router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -16,6 +16,20 @@ type Client struct {
 	// Sent as "Authorization: Bearer <token>": a session token from Login,
 	// or a service key from WithToken.
 	token string
+	// Extra headers on every request (WithHeader).
+	headers map[string]string
+}
+
+// WithHeader returns a copy that also sends header k: v on every request
+// (e.g. Idempotency-Key, X-Via).
+func (c *Client) WithHeader(k, v string) *Client {
+	cp := *c
+	cp.headers = make(map[string]string, len(c.headers)+1)
+	for hk, hv := range c.headers {
+		cp.headers[hk] = hv
+	}
+	cp.headers[k] = v
+	return &cp
 }
 
 // WithToken returns a copy that authenticates with token (e.g. the agent's
@@ -37,6 +51,9 @@ func New(baseURL string) *Client {
 type APIError struct {
 	Status  int
 	Message string
+	// Code is the server's stable reason, e.g. "truck_busy" (see the API's
+	// respond.go).
+	Code string
 }
 
 func (e *APIError) Error() string {
@@ -61,6 +78,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -71,12 +91,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if res.StatusCode >= 400 {
 		var e struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		json.NewDecoder(res.Body).Decode(&e)
 		if e.Error == "" {
 			e.Error = res.Status
 		}
-		return &APIError{Status: res.StatusCode, Message: e.Error}
+		return &APIError{Status: res.StatusCode, Message: e.Error, Code: e.Code}
 	}
 
 	if path == "/auth/login" || path == "/auth/driver-login" {

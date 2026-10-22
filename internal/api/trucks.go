@@ -95,7 +95,7 @@ func (s *Server) updateTruck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.logger.Error("begin tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not update truck"})

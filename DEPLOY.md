@@ -68,6 +68,15 @@ Make a free HTTP monitor (UptimeRobot or cron-job.org) on `https://<your-service
 4. Console → Settings → **Website and booking**: turn on Online booking, set the dispatch email and prices.
 5. Try it at `/book` with Paystack's test card. Going live needs your business verified on Paystack and the live keys (`sk_live_…`) in place of the test ones.
 
+## 8. The Copilot (chat that can make changes)
+
+Runs inside the agent; nothing to deploy separately.
+
+- Conversations are kept in the same database (`DATABASE_URL`, already set in the container). The first start creates the tables `checkpoints`, `checkpoint_writes`, `checkpoint_blobs` and `checkpoint_migrations`.
+- Optional: `COPILOT_SMALL_MODEL` (a cheaper OpenRouter model for summarising long chats) and `COPILOT_FALLBACK_MODEL` (tried when the main one fails).
+- Optional tracing: `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` send every run to LangSmith, tagged `copilot`.
+- Every change it makes is recorded as the dispatcher who approved it, with `via = copilot` and the conversation id, in the delivery's history.
+
 ## If something fails
 
 - **Render logs** show the migration output, the agent's lines (`supervisor: …`, `tick: …`) and the API's requests.

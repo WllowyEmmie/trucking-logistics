@@ -13,7 +13,7 @@ import (
 )
 
 const listEventsForDelivery = `-- name: ListEventsForDelivery :many
-SELECT id, event_type, stop_id, note, created_at
+SELECT id, event_type, stop_id, note, created_at, actor, via, thread_id
 FROM delivery_events
 WHERE delivery_id = $1
 ORDER BY created_at, id
@@ -25,6 +25,9 @@ type ListEventsForDeliveryRow struct {
 	StopID    *uuid.UUID `json:"stop_id"`
 	Note      *string    `json:"note"`
 	CreatedAt time.Time  `json:"created_at"`
+	Actor     *string    `json:"actor"`
+	Via       *string    `json:"via"`
+	ThreadID  *string    `json:"thread_id"`
 }
 
 func (q *Queries) ListEventsForDelivery(ctx context.Context, deliveryID uuid.UUID) ([]ListEventsForDeliveryRow, error) {
@@ -42,6 +45,9 @@ func (q *Queries) ListEventsForDelivery(ctx context.Context, deliveryID uuid.UUI
 			&i.StopID,
 			&i.Note,
 			&i.CreatedAt,
+			&i.Actor,
+			&i.Via,
+			&i.ThreadID,
 		); err != nil {
 			return nil, err
 		}

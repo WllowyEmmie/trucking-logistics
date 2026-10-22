@@ -57,7 +57,7 @@ func (s *Server) reopenDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.pool.Begin(r.Context())
+	tx, err := s.beginTx(r.Context())
 	if err != nil {
 		s.respondErr(w, err, "begin tx", "could not send the delivery out again")
 		return
@@ -81,7 +81,7 @@ func (s *Server) reopenDelivery(w http.ResponseWriter, r *http.Request) {
 func (s *Server) reopenTx(ctx context.Context, qtx *db.Queries, deliveryID, truckID uuid.UUID, mode, actor string) (db.AssignTruckRow, error) {
 	var zero db.AssignTruckRow
 	if !validReopenModes[mode] {
-		return zero, apiError{http.StatusBadRequest, "mode must be resume, handover or restart"}
+		return zero, apiError{status: http.StatusBadRequest, message: "mode must be resume, handover or restart"}
 	}
 	d, err := qtx.GetDeliveryForUpdate(ctx, deliveryID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -91,7 +91,7 @@ func (s *Server) reopenTx(ctx context.Context, qtx *db.Queries, deliveryID, truc
 		return zero, err
 	}
 	if d.Status != "failed" {
-		return zero, errConflict("delivery is " + d.Status + "; only a failed delivery can be sent out again")
+		return zero, errConflictCode(codeWrongStatus, "delivery is "+d.Status+"; only a failed delivery can be sent out again")
 	}
 	stops, err := qtx.ListStopsForDelivery(ctx, deliveryID)
 	if err != nil {
