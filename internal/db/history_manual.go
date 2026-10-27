@@ -32,7 +32,9 @@ type HistoryFilter struct {
 	// late (completed after its due time), or "" for all.
 	Outcome string
 	Query   string
-	From    *time.Time
+	// The plate on its last assignment (one truck's history), or "".
+	Plate string
+	From  *time.Time
 	To      *time.Time
 	// Keyset cursor: rows finished before this (and, at the same instant,
 	// with a smaller id).
@@ -57,7 +59,7 @@ func (q *Queries) DeliveryHistory(ctx context.Context, f HistoryFilter) ([]Histo
 		    (SELECT e.note FROM delivery_events e WHERE e.delivery_id = d.id AND e.event_type = 'failed'
 		      ORDER BY e.created_at, e.id LIMIT 1) AS first_fail,
 		    (SELECT substring(e.note FROM 'assigned to (.*)$') FROM delivery_events e
-		      WHERE e.delivery_id = d.id AND e.event_type = 'assigned' ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS plate
+		      WHERE e.delivery_id = d.id AND e.event_type IN ('assigned', 'auto_assigned', 'reassigned') ORDER BY e.created_at DESC, e.id DESC LIMIT 1) AS plate
 		  FROM deliveries d
 		  WHERE d.status IN ('completed', 'cancelled', 'failed')
 		    AND ($2 = '' OR d.reference ILIKE $2 OR d.customer_name ILIKE $2)
@@ -75,9 +77,10 @@ func (q *Queries) DeliveryHistory(ctx context.Context, f HistoryFilter) ([]Histo
 		  AND ($3::timestamptz IS NULL OR finished_at >= $3)
 		  AND ($4::timestamptz IS NULL OR finished_at < $4)
 		  AND ($5::timestamptz IS NULL OR (finished_at, id) < ($5, $6::uuid))
+		  AND ($8 = '' OR plate = $8)
 		ORDER BY finished_at DESC, id DESC
 		LIMIT $7`,
-		f.Outcome, like, f.From, f.To, f.BeforeAt, f.BeforeID, f.Limit)
+		f.Outcome, like, f.From, f.To, f.BeforeAt, f.BeforeID, f.Limit, f.Plate)
 	if err != nil {
 		return nil, err
 	}

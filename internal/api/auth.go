@@ -27,6 +27,38 @@ const (
 
 const sessionCookie = "session"
 
+// Drivers get their own cookie, so signing in to the driver app in the same
+// browser doesn't sign the console out (and the other way round).
+const driverSessionCookie = "driver_session"
+
+// headerApp says which app is calling ("console" or "driver"), and so which
+// cookie is meant. Without it (scripts, the agent forwarding a console
+// cookie) the dispatcher cookie is tried first.
+const headerApp = "X-App"
+
+// cookieFor is the cookie a session for role lives in.
+func cookieFor(role string) string {
+	if role == roleDriver {
+		return driverSessionCookie
+	}
+	return sessionCookie
+}
+
+// sessionCookies are the cookies this request may sign in with, in order.
+func sessionCookies(r *http.Request) []string {
+	// A socket can't send headers: its path says which app it is.
+	if r.URL.Path == "/ws/driver" {
+		return []string{driverSessionCookie}
+	}
+	switch r.Header.Get(headerApp) {
+	case "driver":
+		return []string{driverSessionCookie}
+	case "console":
+		return []string{sessionCookie}
+	}
+	return []string{sessionCookie, driverSessionCookie}
+}
+
 // principal is who a request is from.
 type principal struct {
 	Role  string
@@ -37,6 +69,8 @@ type principal struct {
 	Trucks []uuid.UUID
 	// Signed in with the cookie (a browser) rather than a bearer token.
 	viaCookie bool
+	// Drivers still on the default PIN: pinGate lets them only choose a new one.
+	MustChangePIN bool
 }
 
 type ctxKey struct{}
@@ -63,8 +97,10 @@ func presentedToken(r *http.Request) (token string, viaCookie bool) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer ")), false
 	}
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		return c.Value, true
+	for _, name := range sessionCookies(r) {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			return c.Value, true
+		}
 	}
 	return "", false
 }
@@ -74,27 +110,50 @@ func presentedToken(r *http.Request) (token string, viaCookie bool) {
 // public routes keep working with a stale cookie.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, viaCookie := presentedToken(r)
-		if token == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !viaCookie && auth.SameKey(token, s.cfg.AgentAPIKey) {
-			p := &principal{Role: roleAgent, Name: "agent"}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
-			return
-		}
-		p, err := s.loadSession(r.Context(), token)
-		if err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				s.logger.Error("load session", "err", err)
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			token := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+			if auth.SameKey(token, s.cfg.AgentAPIKey) {
+				p := &principal{Role: roleAgent, Name: "agent"}
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+				return
+			}
+			if p := s.sessionFor(r, token); p != nil {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+				return
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
-		p.viaCookie = viaCookie
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+		for _, name := range sessionCookies(r) {
+			c, err := r.Cookie(name)
+			if err != nil || c.Value == "" {
+				continue
+			}
+			p := s.sessionFor(r, c.Value)
+			// A session in the other app's cookie (one from before drivers had
+			// their own) doesn't count: otherwise the console could think a
+			// driver is signed in, or the driver app a dispatcher.
+			if p == nil || cookieFor(p.Role) != name {
+				continue
+			}
+			p.viaCookie = true
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// sessionFor is the session behind token, or nil.
+func (s *Server) sessionFor(r *http.Request, token string) *principal {
+	p, err := s.loadSession(r.Context(), token)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("load session", "err", err)
+		}
+		return nil
+	}
+	return p
 }
 
 func (s *Server) loadSession(ctx context.Context, token string) (*principal, error) {
@@ -118,7 +177,7 @@ func (s *Server) loadSession(ctx context.Context, token string) (*principal, err
 		if err != nil {
 			return nil, err
 		}
-		return &principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks}, nil
+		return &principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks, MustChangePIN: d.MustChangePIN}, nil
 	}
 	return nil, pgx.ErrNoRows
 }
@@ -243,10 +302,12 @@ type meResponse struct {
 	// Drivers: whether they're on shift, and since when.
 	OnShift    *bool      `json:"on_shift,omitempty"`
 	ShiftSince *time.Time `json:"shift_since,omitempty"`
+	// Drivers on the default PIN: the app asks for a new one before anything else.
+	MustChangePIN bool `json:"must_change_pin,omitempty"`
 }
 
 func meOf(p *principal) meResponse {
-	m := meResponse{Role: p.Role, Name: p.Name, Email: p.Email}
+	m := meResponse{Role: p.Role, Name: p.Name, Email: p.Email, MustChangePIN: p.MustChangePIN}
 	if p.ID != uuid.Nil {
 		id := p.ID
 		m.ID = &id
@@ -356,6 +417,14 @@ func (s *Server) driverLogin(w http.ResponseWriter, r *http.Request) {
 		s.respondErr(w, err, "driver trucks", "could not sign in")
 		return
 	}
+	m := meOf(&principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks, MustChangePIN: d.MustChangePIN})
+	// On the default PIN: signed in, but no shift until they've chosen their own.
+	if d.MustChangePIN {
+		off := false
+		m.OnShift = &off
+		s.startSession(w, r, roleDriver, d.ID, s.cfg.DriverSessionTTL, m)
+		return
+	}
 	// Signing in to the app starts the shift: a driver opens it to go to
 	// work. They end it in the app (or dispatch does) when they're done.
 	since, err := s.queries.StartShift(r.Context(), d.ID)
@@ -364,7 +433,6 @@ func (s *Server) driverLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The app takes this as who's signed in, so it says they're on shift.
-	m := meOf(&principal{Role: roleDriver, ID: d.ID, Name: d.Name, Trucks: trucks})
 	on := true
 	m.OnShift, m.ShiftSince = &on, &since
 	s.startSession(w, r, roleDriver, d.ID, s.cfg.DriverSessionTTL, m)
@@ -382,7 +450,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, role strin
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+		Name:     cookieFor(role),
 		Value:    token,
 		Path:     "/",
 		Expires:  expires,
@@ -399,7 +467,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("delete session", "err", err)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode})
+	// Only the calling app's cookie: signing out of the driver app leaves
+	// the console signed in.
+	for _, name := range sessionCookies(r) {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

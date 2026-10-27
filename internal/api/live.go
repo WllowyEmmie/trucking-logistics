@@ -46,6 +46,9 @@ func changedBy(path string) (topics []string, deliveryID string) {
 		topics = []string{"trucks"}
 	case "drivers":
 		topics = []string{"drivers", "trucks"}
+		if len(parts) > 2 && parts[2] == "messages" {
+			topics = []string{"messages"}
+		}
 	case "proposals":
 		topics = []string{"proposals", "deliveries", "trucks"}
 	case "config":
@@ -58,6 +61,12 @@ func changedBy(path string) (topics []string, deliveryID string) {
 		// in (which starts one). Dispatchers signing in and out don't.
 		if (len(parts) > 2 && parts[1] == "me" && parts[2] == "shift") || (len(parts) > 1 && parts[1] == "driver-login") {
 			topics = []string{"drivers", "trucks"}
+		}
+		if len(parts) > 2 && parts[1] == "me" && parts[2] == "pin" {
+			topics = []string{"drivers", "trucks"}
+		}
+		if len(parts) > 2 && parts[1] == "me" && parts[2] == "messages" {
+			topics = []string{"messages"}
 		}
 	}
 	// /locations is announced by the position frames themselves.

@@ -48,6 +48,8 @@ type DriverLogin struct {
 	Name    string
 	Phone   string
 	PinHash *string
+	// Still on the default PIN: they must choose their own before anything else.
+	MustChangePIN bool
 }
 
 // GetDriverByPhone matches on digits and a leading + only, so a number typed
@@ -55,28 +57,45 @@ type DriverLogin struct {
 func (q *Queries) GetDriverByPhone(ctx context.Context, phone string) (DriverLogin, error) {
 	var d DriverLogin
 	err := q.db.QueryRow(ctx, `
-		SELECT id, name, phone, pin_hash FROM drivers
+		SELECT id, name, phone, pin_hash, pin_must_change FROM drivers
 		WHERE regexp_replace(phone, '[^0-9+]', '', 'g') = $1
-		ORDER BY created_at LIMIT 1`, phone).Scan(&d.ID, &d.Name, &d.Phone, &d.PinHash)
+		ORDER BY created_at LIMIT 1`, phone).Scan(&d.ID, &d.Name, &d.Phone, &d.PinHash, &d.MustChangePIN)
 	return d, err
 }
 
 func (q *Queries) GetDriverLogin(ctx context.Context, id uuid.UUID) (DriverLogin, error) {
 	var d DriverLogin
-	err := q.db.QueryRow(ctx, `SELECT id, name, phone, pin_hash FROM drivers WHERE id = $1`, id).
-		Scan(&d.ID, &d.Name, &d.Phone, &d.PinHash)
+	err := q.db.QueryRow(ctx, `SELECT id, name, phone, pin_hash, pin_must_change FROM drivers WHERE id = $1`, id).
+		Scan(&d.ID, &d.Name, &d.Phone, &d.PinHash, &d.MustChangePIN)
 	return d, err
 }
 
 // SetDriverPIN stores a new PIN hash and signs the driver out everywhere, so
 // a phone that knew the old PIN can't carry on. Returns false if no driver.
 func (q *Queries) SetDriverPIN(ctx context.Context, id uuid.UUID, pinHash string) (bool, error) {
-	tag, err := q.db.Exec(ctx, `UPDATE drivers SET pin_hash = $2 WHERE id = $1`, id, pinHash)
+	return q.setPIN(ctx, id, pinHash, false)
+}
+
+// SetDefaultDriverPIN gives a new driver the default PIN, which they must
+// change at their first sign-in.
+func (q *Queries) SetDefaultDriverPIN(ctx context.Context, id uuid.UUID, pinHash string) (bool, error) {
+	return q.setPIN(ctx, id, pinHash, true)
+}
+
+func (q *Queries) setPIN(ctx context.Context, id uuid.UUID, pinHash string, mustChange bool) (bool, error) {
+	tag, err := q.db.Exec(ctx, `UPDATE drivers SET pin_hash = $2, pin_must_change = $3 WHERE id = $1`, id, pinHash, mustChange)
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, err
 	}
 	_, err = q.db.Exec(ctx, `DELETE FROM sessions WHERE role = 'driver' AND subject_id = $1`, id)
 	return true, err
+}
+
+// ChangeOwnPIN is the driver choosing their PIN: it clears the must-change
+// mark and keeps them signed in on the phone that did it.
+func (q *Queries) ChangeOwnPIN(ctx context.Context, id uuid.UUID, pinHash string) error {
+	_, err := q.db.Exec(ctx, `UPDATE drivers SET pin_hash = $2, pin_must_change = false WHERE id = $1`, id, pinHash)
+	return err
 }
 
 // TrucksForDriver: the trucks a driver may act for (those with them as the

@@ -94,3 +94,46 @@ def session_token(cookie_header: str | None, authorization: str | None, cookie_n
 def sse(event: str, data: Any) -> str:
     """One server-sent event."""
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+PERIODS = ("today", "yesterday", "last_7_days", "last_30_days", "this_month", "last_month", "custom")
+
+
+def resolve_period(period: str, from_date: str | None, to_date: str | None, today: "date") -> tuple[str, str, str]:
+    """A named period, or two dates, → (from, to, label), dates inclusive in
+    the operator's time zone. Raises ValueError with a sentence to show."""
+    from datetime import date, timedelta
+
+    p = (period or "today").strip().lower()
+    if p not in PERIODS:
+        raise ValueError(f"Unknown period {period!r}. Use one of: {', '.join(PERIODS)}.")
+    if p == "today":
+        a = b = today
+    elif p == "yesterday":
+        a = b = today - timedelta(days=1)
+    elif p == "last_7_days":
+        a, b = today - timedelta(days=6), today
+    elif p == "last_30_days":
+        a, b = today - timedelta(days=29), today
+    elif p == "this_month":
+        a, b = today.replace(day=1), today
+    elif p == "last_month":
+        b = today.replace(day=1) - timedelta(days=1)
+        a = b.replace(day=1)
+    else:
+        try:
+            a = date.fromisoformat((from_date or "").strip())
+            b = date.fromisoformat((to_date or from_date or "").strip())
+        except ValueError:
+            raise ValueError("A custom period needs from_date and to_date like 2026-10-01.") from None
+    if b < a:
+        a, b = b, a
+    if (b - a).days > 91:
+        raise ValueError("At most 92 days at a time.")
+    if a == b:
+        label = a.strftime("%a %d %b %Y")
+    elif a.year == b.year and a.month == b.month:
+        label = f"{a.day}–{b.day} {b.strftime('%b %Y')}"
+    else:
+        label = f"{a.strftime('%d %b')} – {b.strftime('%d %b %Y')}"
+    return a.isoformat(), b.isoformat(), label

@@ -25,13 +25,14 @@ type historyItem struct {
 //
 //	outcome  completed | cancelled | failed | recovered | late (default all)
 //	q        part of the reference or customer name
+//	truck    a plate: that truck's deliveries only
 //	from,to  finished in [from, to), RFC 3339
 //	limit    1-200 (50)
 //	before   the `next` of the previous page
 func (s *Server) deliveryHistory(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
 	bad := func(msg string) { writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg}) }
-	f := db.HistoryFilter{Outcome: v.Get("outcome"), Query: strings.TrimSpace(v.Get("q")), Limit: 50}
+	f := db.HistoryFilter{Outcome: v.Get("outcome"), Query: strings.TrimSpace(v.Get("q")), Plate: strings.TrimSpace(v.Get("truck")), Limit: 50}
 	if !validOutcomes[f.Outcome] {
 		bad("outcome must be completed, cancelled, failed, recovered or late")
 		return

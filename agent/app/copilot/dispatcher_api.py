@@ -85,6 +85,9 @@ class AsDispatcher:
     async def put(self, path: str, body: Any, key: str) -> Any:
         return await self.request("PUT", path, json=body, idempotency_key=key)
 
+    async def delete(self, path: str, key: str) -> Any:
+        return await self.request("DELETE", path, idempotency_key=key)
+
 
 def seg(value: str) -> str:
     """One path segment: a model's argument can't reach another endpoint."""

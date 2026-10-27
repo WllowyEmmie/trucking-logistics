@@ -54,10 +54,14 @@ def interrupt_event(intr: Any, tiers: dict[str, str]) -> dict:
     return {"id": getattr(intr, "id", None), "actions": actions}
 
 
-def translate(mode: str, chunk: Any, tiers: dict[str, str]) -> Iterator[tuple[str, dict]]:
+def translate(
+    mode: str, chunk: Any, tiers: dict[str, str], model_node: str = MODEL_NODE
+) -> Iterator[tuple[str, dict]]:
+    """model_node: the graph node that calls the model ("model" in
+    create_agent; "agent" in the ask box's own graph)."""
     if mode == "messages":
         msg, meta = chunk
-        if (meta or {}).get("langgraph_node") == MODEL_NODE and _type(msg) in ("AIMessageChunk", "ai"):
+        if (meta or {}).get("langgraph_node") == model_node and _type(msg) in ("AIMessageChunk", "ai"):
             text = text_of(getattr(msg, "content", ""))
             if text:
                 yield "token", {"text": text}
@@ -66,6 +70,9 @@ def translate(mode: str, chunk: Any, tiers: dict[str, str]) -> Iterator[tuple[st
     if mode == "custom":
         if isinstance(chunk, dict) and isinstance(chunk.get("ui"), dict):
             yield "ui", chunk["ui"]
+        if isinstance(chunk, dict) and isinstance(chunk.get("file"), dict):
+            # A file was made (a PDF report): {"id", "name", "mime", "size", "url"}.
+            yield "file", chunk["file"]
         return
 
     if mode != "updates" or not isinstance(chunk, dict):
@@ -75,7 +82,7 @@ def translate(mode: str, chunk: Any, tiers: dict[str, str]) -> Iterator[tuple[st
             for intr in update or ():
                 yield "interrupt", interrupt_event(intr, tiers)
             continue
-        if node not in (MODEL_NODE, TOOLS_NODE) or not isinstance(update, dict):
+        if node not in (model_node, TOOLS_NODE) or not isinstance(update, dict):
             continue
         for msg in update.get("messages", []) or []:
             kind = _type(msg)
@@ -88,7 +95,8 @@ def translate(mode: str, chunk: Any, tiers: dict[str, str]) -> Iterator[tuple[st
                     }
                 text = text_of(getattr(msg, "content", "")).strip()
                 if text and not calls:
-                    yield "message", {"text": text}
+                    # Markdown: every client renders it (console, terminal clients).
+                    yield "message", {"text": text, "format": "markdown"}
             elif kind == "tool":
                 content = text_of(getattr(msg, "content", ""))
                 ok = getattr(msg, "status", "success") != "error" and not content.startswith("Refused (")

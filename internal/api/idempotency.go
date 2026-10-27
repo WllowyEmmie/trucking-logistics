@@ -185,3 +185,5 @@ func (rw *recordingWriter) Write(b []byte) (int, error) {
 	rw.body.Write(b)
 	return rw.ResponseWriter.Write(b)
 }
+
+func (rw *recordingWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }

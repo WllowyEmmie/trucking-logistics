@@ -67,5 +67,6 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger, cfg *config.Config) *Ser
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s.loadSettings(ctx)
+	s.registerGauges()
 	return s
 }

@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import settings
 from .timefmt import duration
+from .tracing import run_config
 
 STATUS = {
     "pending": "booked, waiting for a truck to be assigned",
@@ -167,10 +168,14 @@ def describe(track: dict, tz: ZoneInfo, units: str, now: datetime) -> str:
 async def answer(llm, track: dict, question: str, tz: ZoneInfo, units: str, op: dict | None = None) -> str:
     now = datetime.now(tz)
     record = describe(track, tz, units, now)
-    reply = await llm.ainvoke([
-        SystemMessage(_prompt(op)),
-        HumanMessage(f"Delivery record:\n{record}\n\nCustomer's question:\n{question}"),
-    ])
+    reply = await llm.ainvoke(
+        [
+            SystemMessage(_prompt(op)),
+            HumanMessage(f"Delivery record:\n{record}\n\nCustomer's question:\n{question}"),
+        ],
+        # No customer details in the trace metadata: the run's inputs are enough.
+        config=run_config("customer"),
+    )
     return message_text(reply.content)
 
 

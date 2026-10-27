@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -19,8 +20,12 @@ from .copilot import api as copilot_api
 from .copilot import dispatcher_api as copilot_http
 from .copilot.agent import build_copilot
 from .copilot.checkpoint import open_checkpointer
+from .copilot.stream import translate
+from .copilot.util import sse
 from .graph import build_ask_graph, build_proposal_graph, build_supervisor_decider
+from . import tracing
 from .prompts import ASK
+from .tracing import run_config
 from .proposer import run_tick
 from .supervisor import run_supervisor
 from .tools import api
@@ -80,7 +85,7 @@ async def locked_tick(source: str) -> dict:
     if not await agent_enabled():
         return {"status": "idle", "reason": "the agent is turned off in Settings"}
     async with tick_lock:
-        result = await run_tick(propose_graph, include_pending=not await auto_mode())
+        result = await run_tick(propose_graph, include_pending=not await auto_mode(), source=source)
     log.info("tick (%s): %s", source, _outcome(result))
     return result
 
@@ -194,6 +199,7 @@ async def listen() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    tracing.log_status()
     async with AsyncExitStack() as stack:
         # The Copilot: its conversations are checkpointed (Postgres in
         # production), which is what lets a turn wait on an approval.
@@ -271,7 +277,7 @@ async def health():
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask(req: AskRequest, _me: dict = Depends(require_dispatcher)) -> AskResponse:
+async def ask(req: AskRequest, me: dict = Depends(require_dispatcher)) -> AskResponse:
     if not await agent_enabled():
         raise HTTPException(503, detail="The agent is turned off in Settings.")
     logging.getLogger("app.ask").info("ask: prompt=%s", ASK.version)
@@ -279,7 +285,8 @@ async def ask(req: AskRequest, _me: dict = Depends(require_dispatcher)) -> AskRe
         # recursion_limit caps the tool loop (two steps per round), so a
         # model that keeps calling tools can't run up the bill.
         result = await ask_graph.ainvoke(
-            {"messages": [HumanMessage(req.question)]}, config={"recursion_limit": 12}
+            {"messages": [HumanMessage(req.question)]},
+            config=run_config("ask", ASK.version, recursion_limit=12, dispatcher=me.get("email")),
         )
     except Exception as e:
         # Out of credits, a provider outage, a timeout. Say which, briefly,
@@ -287,6 +294,40 @@ async def ask(req: AskRequest, _me: dict = Depends(require_dispatcher)) -> AskRe
         logging.getLogger("app.ask").exception("ask failed")
         raise HTTPException(502, detail=f"The model call failed: {type(e).__name__}: {str(e)[:160]}")
     return AskResponse(answer=customer.message_text(result["messages"][-1].content))
+
+
+@app.post("/ask/stream")
+async def ask_stream(req: AskRequest, me: dict = Depends(require_dispatcher)) -> StreamingResponse:
+    """The ask box, streamed: server-sent events as the answer is written.
+    token {"text"} as it comes, tool_start/tool_end while it looks things
+    up, message {"text"} with the whole answer, then done (or error). Same
+    answer as POST /ask, which stays for clients that want one response."""
+    if not await agent_enabled():
+        raise HTTPException(503, detail="The agent is turned off in Settings.")
+    alog = logging.getLogger("app.ask")
+    alog.info("ask (stream): prompt=%s", ASK.version)
+    config = run_config("ask", ASK.version, recursion_limit=12, dispatcher=me.get("email"), streamed=True)
+
+    async def events():
+        try:
+            async with asyncio.timeout(120):
+                async for mode, chunk in ask_graph.astream(
+                    {"messages": [HumanMessage(req.question)]}, config, stream_mode=["updates", "messages"]
+                ):
+                    for event, data in translate(mode, chunk, {}, model_node="agent"):
+                        yield sse(event, data)
+        except TimeoutError:
+            yield sse("error", {"message": "That took too long and was stopped."})
+            return
+        except Exception as e:
+            alog.exception("ask (stream) failed")
+            yield sse("error", {"message": f"The model call failed: {type(e).__name__}"})
+            return
+        yield sse("done", {})
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 class CustomerAsk(BaseModel):

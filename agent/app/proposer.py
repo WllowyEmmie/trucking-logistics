@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from langchain_core.messages import HumanMessage
 
 from .client import APIError
+from .prompts import PROPOSE
 from .schema import ProposedAssignment
+from .tracing import run_config
 from .timefmt import duration
 from .tools import api
 
@@ -81,7 +83,7 @@ class FailedRow:
     near: list
 
 
-async def run_tick(graph, include_pending: bool = True) -> dict:
+async def run_tick(graph, include_pending: bool = True, source: str = "scheduled") -> dict:
     """One pass: read state, build the table, one model call, validate, write.
 
     Returns a summary rather than raising, because this runs on a timer and
@@ -125,7 +127,10 @@ async def run_tick(graph, include_pending: bool = True) -> dict:
     table = "\n\n".join(x for x in (_table(rows, now) if rows else "", _failed_table(failed_rows, now)) if x)
     decided_by = "model"
     try:
-        result = await graph.ainvoke({"messages": [HumanMessage(table)], "result": None})
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(table)], "result": None},
+            config=run_config("tick", PROPOSE.version, source=source, pending=len(rows), failed=len(failed_rows)),
+        )
         proposals = result["result"].proposals if result["result"] else []
     except Exception as e:
         # The model timed out, or its answer didn't fit TickOutput twice.

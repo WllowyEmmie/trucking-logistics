@@ -54,24 +54,51 @@ func (s *Server) positionsSocket(w http.ResponseWriter, r *http.Request) {
 	if err := writeJSONFrame(ctx, conn, snap); err != nil {
 		return
 	}
+	s.pump(ctx, conn, c)
+}
 
+// driverSocket is GET /ws/driver (drivers): the driver's own thread, live.
+// Each message dispatch sends them (or they send from another phone) comes
+// as {"type":"message","message":{…}}, so the chat shows it at once. There's
+// no snapshot: the app loads the thread with GET /auth/me/messages.
+func (s *Server) driverSocket(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r.Context())
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.cfg.OriginHosts(),
+	})
+	if err != nil {
+		s.logger.Warn("driver ws upgrade failed", "err", err)
+		return
+	}
+	defer conn.CloseNow()
+	ctx := conn.CloseRead(r.Context())
+
+	c := &wsClient{send: make(chan wsMessage, sendBuffer)}
+	s.hub.addDriver(p.ID, c)
+	defer s.hub.removeDriver(p.ID, c)
+
+	if err := writeJSONFrame(ctx, conn, wsMessage{Type: "hello"}); err != nil {
+		return
+	}
+	s.pump(ctx, conn, c)
+}
+
+// pump writes c's frames until the client goes or the hub drops it, and
+// pings so a dead connection is noticed.
+func (s *Server) pump(ctx context.Context, conn *websocket.Conn, c *wsClient) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-
 		case m, ok := <-c.send:
 			if !ok {
-				// The hub closed the channel: we're being removed.
 				return
 			}
 			if err := writeJSONFrame(ctx, conn, m); err != nil {
 				return
 			}
-
 		case <-ping.C:
 			pctx, cancel := context.WithTimeout(ctx, writeTimeout)
 			err := conn.Ping(pctx)

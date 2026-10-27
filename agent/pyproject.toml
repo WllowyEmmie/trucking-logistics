@@ -17,13 +17,21 @@ dependencies = [
     # The Copilot's conversations in Postgres (app/copilot/checkpoint.py).
     "langgraph-checkpoint-postgres>=2.0",
     "psycopg[binary]>=3.2",
+    # PDF reports with charts (app/reports/pdf.py).
+    "reportlab>=4.0",
     "python-dotenv>=1.0",
     # IANA time zones for zoneinfo: Windows has no system database.
     "tzdata>=2024.1",
 ]
 
+# Only the app is the package. evals/, scripts/ and tests/ run from this
+# folder and aren't installed; without this, setuptools finds several
+# top-level packages and refuses to build.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pyyaml>=6", "rich>=13"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

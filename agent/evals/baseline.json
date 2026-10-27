@@ -1,0 +1,4 @@
+{
+  "min_score": 0.85,
+  "note": "The build fails below this. Raise it as the agent improves; lower it only on purpose, saying why in the commit."
+}

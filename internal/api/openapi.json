@@ -13,13 +13,40 @@
   "paths": {
     "/health": {
       "get": {
-        "summary": "Liveness",
+        "summary": "Health: 200 while the database answers (status degraded if the agent doesn't), 503 when it doesn't",
         "tags": [
           "system"
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics: request counts and durations, query times, slow queries, sockets. Bearer METRICS_TOKEN, or a dispatcher or the agent",
+        "tags": [
+          "system"
+        ],
+        "responses": {
+          "200": {
+            "description": "Prometheus text format",
+            "content": {
+              "text/plain": {}
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -601,9 +628,40 @@
         ]
       }
     },
+    "/ws/driver": {
+      "get": {
+        "summary": "The driver's own message thread, live ({\"type\":\"message\",\"message\"}). Browser on another host: ?ticket= from /ws/ticket",
+        "tags": [
+          "live"
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching protocols"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "driver": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/ws/ticket": {
       "get": {
-        "summary": "One-minute single-use ticket for /ws",
+        "summary": "One-minute single-use ticket for /ws (dispatchers) or /ws/driver (drivers)",
         "tags": [
           "live"
         ],
@@ -618,6 +676,9 @@
         "security": [
           {
             "dispatcher": []
+          },
+          {
+            "driver": []
           }
         ]
       }
@@ -773,6 +834,45 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Remove a truck (409 while it has a delivery)",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -1276,6 +1376,15 @@
               "type": "string",
               "maxLength": 100
             }
+          },
+          {
+            "name": "truck",
+            "in": "query",
+            "required": false,
+            "description": "A plate: only that truck's deliveries",
+            "schema": {
+              "type": "string"
+            }
           }
         ]
       }
@@ -1310,6 +1419,106 @@
           },
           {
             "agent": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "summary": "Edit a delivery's customer, goods and stop details (pending or assigned only)",
+        "tags": [
+          "deliveries"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "customer_name": {
+                    "type": "string"
+                  },
+                  "customer_phone": {
+                    "type": "string"
+                  },
+                  "goods_desc": {
+                    "type": "string"
+                  },
+                  "stops": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "address": {
+                          "type": "string"
+                        },
+                        "lat": {
+                          "type": "number"
+                        },
+                        "lng": {
+                          "type": "number"
+                        },
+                        "contact_name": {
+                          "type": "string"
+                        },
+                        "contact_phone": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference": {
+                      "type": "string"
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
           }
         ],
         "parameters": [
@@ -1571,6 +1780,66 @@
                   "reason": {
                     "type": "string",
                     "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
+    },
+    "/deliveries/{id}/reassign": {
+      "post": {
+        "summary": "Move an assigned delivery that hasn't started to another truck (codes: wrong_status, truck_busy, truck_no_driver)",
+        "tags": [
+          "deliveries"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "truck_id"
+                ],
+                "properties": {
+                  "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
                   }
                 }
               }
@@ -2335,6 +2604,74 @@
         ]
       }
     },
+    "/reports/deliveries": {
+      "get": {
+        "summary": "What happened to deliveries created between two dates (inclusive, operator's time zone, at most 92 days): by status, per day, per truck, on time vs late, and the deliveries",
+        "tags": [
+          "reports"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          },
+          {
+            "agent": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
+    "/problems": {
+      "get": {
+        "summary": "What needs attention now, worst first: late, at risk, not started, waiting, failed, silent trucks, drivers on shift without a truck",
+        "tags": [
+          "reports"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          },
+          {
+            "agent": []
+          }
+        ]
+      }
+    },
     "/openapi.json": {
       "get": {
         "summary": "This document",
@@ -2351,10 +2688,647 @@
         },
         "security": []
       }
+    },
+    "/messages": {
+      "get": {
+        "summary": "Message threads, newest first",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ]
+      }
+    },
+    "/drivers/{id}/messages": {
+      "get": {
+        "summary": "A driver's thread, oldest first",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "post": {
+        "summary": "Message a driver",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "body"
+                ],
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/drivers/{id}/messages/read": {
+      "post": {
+        "summary": "Mark a driver's messages read",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
+    },
+    "/auth/me/messages": {
+      "get": {
+        "summary": "The driver's thread with dispatch",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "driver": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Message dispatch",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "driver": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "body"
+                ],
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me/messages/read": {
+      "post": {
+        "summary": "Mark dispatch's messages read",
+        "tags": [
+          "messages"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "driver": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
+    },
+    "/drivers/{id}": {
+      "delete": {
+        "summary": "Remove a driver (409 while on shift)",
+        "tags": [
+          "drivers"
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
+    },
+    "/auth/me/pin": {
+      "post": {
+        "summary": "Choose a new PIN (required after signing in with the default 1234)",
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "pin"
+                ],
+                "properties": {
+                  "pin": {
+                    "type": "string",
+                    "pattern": "^[0-9]{4,8}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "driver": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
+    },
+    "/trucks/specs": {
+      "get": {
+        "summary": "Every truck's specs and whether it has a photo",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ]
+      }
+    },
+    "/trucks/{id}/specs": {
+      "put": {
+        "summary": "Replace a truck's specs",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body_type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "box",
+                      "dropside",
+                      "flatbed",
+                      "tipper",
+                      "tanker",
+                      "refrigerated",
+                      "curtainsider",
+                      "tractor",
+                      null
+                    ]
+                  },
+                  "capacity_kg": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "body_length_m": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "pallets": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "year": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "fuel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "diesel",
+                      "petrol",
+                      "cng",
+                      "lng",
+                      "electric",
+                      "hybrid",
+                      null
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trucks/{id}/photo": {
+      "get": {
+        "summary": "A truck's photo",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Upload a truck's photo",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "photo"
+                ],
+                "properties": {
+                  "photo": {
+                    "type": "string",
+                    "description": "data URL, JPEG/PNG/WebP, up to 3 MB"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a truck's photo",
+        "tags": [
+          "trucks"
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "dispatcher": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Via"
+          },
+          {
+            "$ref": "#/components/parameters/CopilotThread"
+          }
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ]
+          },
+          "db": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "down"
+            ]
+          },
+          "agent": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "down",
+              "off"
+            ]
+          },
+          "uptime_s": {
+            "type": "integer"
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
@@ -2924,4 +3898,4 @@
       }
     }
   }
-}
+}

@@ -15,11 +15,14 @@ from collections import defaultdict
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from ..tracing import run_config
 from .agent import PROMPT_VERSION
+from . import files
 from .context import CopilotContext
 from .stream import interrupt_event, text_of, to_resume, translate
 from .tools import TIER
@@ -65,13 +68,9 @@ class ResumeIn(BaseModel):
     decisions: list[Decision] = Field(min_length=1, max_length=20)
 
 
-def _config(thread_id: str, me: dict) -> dict:
-    return {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": 60,
-        "tags": ["copilot"],
-        "metadata": {"dispatcher": me.get("email") or me.get("name"), "prompt_version": PROMPT_VERSION},
-    }
+def _config(thread_id: str, me: dict) -> RunnableConfig:
+    return run_config("copilot", PROMPT_VERSION, recursion_limit=60, thread_id=thread_id,
+                      dispatcher=me.get("email") or me.get("name"))
 
 
 async def _context(request: Request, me: dict, thread_id: str) -> CopilotContext:
@@ -83,10 +82,11 @@ async def _context(request: Request, me: dict, thread_id: str) -> CopilotContext
         tz = (await rt.operator_settings()).get("timezone") or tz
     except Exception:
         pass
-    return CopilotContext(token=token, thread_id=thread_id, dispatcher_name=me.get("name") or "the dispatcher", timezone=tz)
+    return CopilotContext(token=token, thread_id=thread_id, dispatcher_name=me.get("name") or "the dispatcher",
+                          timezone=tz, dispatcher_id=str(me.get("id") or ""))
 
 
-async def _pending(config: dict) -> dict | None:
+async def _pending(config: RunnableConfig) -> dict | None:
     """The approval a thread is waiting on, if any."""
     state = await rt.agent.aget_state(config)
     intrs = list(getattr(state, "interrupts", ()) or ())
@@ -96,7 +96,7 @@ async def _pending(config: dict) -> dict | None:
     return interrupt_event(intrs[0], TIER) if intrs else None
 
 
-async def _run(payload: Any, config: dict, ctx: CopilotContext, thread_id: str) -> AsyncIterator[str]:
+async def _run(payload: Any, config: RunnableConfig, ctx: CopilotContext, thread_id: str) -> AsyncIterator[str]:
     yield sse("thread", {"thread_id": thread_id})
     lock = _locks[thread_id]
     if lock.locked():
@@ -168,6 +168,20 @@ async def resume(body: ResumeIn, request: Request, me: dict = Depends(_dispatche
     ctx = await _context(request, me, body.thread_id)
     log.info("copilot %s: decisions %s", body.thread_id[-8:], [d.type for d in body.decisions])
     return _stream(_run(Command(resume=value), config, ctx, body.thread_id))
+
+
+@router.get("/files/{file_id}")
+async def download(file_id: str, me: dict = Depends(_dispatcher)) -> Response:
+    """A file the Copilot made for this dispatcher (a PDF report), for an
+    hour after it was made. Anyone else's id is a 404."""
+    f = files.store.get(file_id, str(me.get("id") or ""))
+    if f is None:
+        raise HTTPException(404, detail="No such file, or it has expired (files are kept for an hour).")
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in f.name)
+    return Response(f.data, media_type=f.mime, headers={
+        "Content-Disposition": f'attachment; filename="{safe}"',
+        "Cache-Control": "private, no-store",
+    })
 
 
 @router.get("/threads/{thread_id}")

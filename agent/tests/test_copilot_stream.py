@@ -30,7 +30,8 @@ def test_tool_calls_and_results():
 
 def test_final_reply_is_sent_whole():
     ai = NS(type="ai", content=[{"type": "text", "text": "Cancelled DEL-2026-10042."}], tool_calls=[])
-    assert events("updates", {"model": {"messages": [ai]}}) == [("message", {"text": "Cancelled DEL-2026-10042."})]
+    assert events("updates", {"model": {"messages": [ai]}}) == [
+        ("message", {"text": "Cancelled DEL-2026-10042.", "format": "markdown"})]
 
 
 def test_ui_events_pass_through():

@@ -39,3 +39,11 @@ services:
       # Where Paystack sends customers back; defaults to CORS_ORIGINS' first entry.
       - key: PUBLIC_SITE_URL
         sync: false
+      # Optional: a token for GET /metrics (Prometheus/Grafana scraping).
+      - key: METRICS_TOKEN
+        sync: false
+      # Optional: LangSmith tracing of every agent run.
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: LANGSMITH_API_KEY
+        sync: false

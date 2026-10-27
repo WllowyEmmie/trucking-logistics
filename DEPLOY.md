@@ -77,6 +77,13 @@ Runs inside the agent; nothing to deploy separately.
 - Optional tracing: `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` send every run to LangSmith, tagged `copilot`.
 - Every change it makes is recorded as the dispatcher who approved it, with `via = copilot` and the conversation id, in the delivery's history.
 
+## 9. Health, metrics, tracing and evals
+
+- **Health:** `GET /health` reports `db` and `agent` (ok, degraded, down or off). It returns 503 only when the database is down, so a restarting agent doesn't make Render restart everything. Render checks it already (`healthCheckPath`).
+- **Metrics:** `GET /metrics` in Prometheus format: requests by route and status, request and query durations, slow queries (`SLOW_QUERY_MS`, default 250, also logged), open sockets and database connections. Set `METRICS_TOKEN` and point a scraper (Grafana Cloud's agent, Prometheus) at it with `Authorization: Bearer <token>`.
+- **Tracing:** set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` on Render. Runs are named ask, copilot, tick, supervisor and customer, tagged with the prompt version, and carry the dispatcher and conversation where there is one.
+- **Evals:** `cd agent; python -m evals.run_evals` runs real requests against the model with a fake fleet and prints a score. On GitHub, add the repository secret `OPENROUTER_API_KEY` and the CI workflow runs them whenever prompts, tools or the harness change, failing below `evals/baseline.json`'s minimum.
+
 ## If something fails
 
 - **Render logs** show the migration output, the agent's lines (`supervisor: …`, `tick: …`) and the API's requests.

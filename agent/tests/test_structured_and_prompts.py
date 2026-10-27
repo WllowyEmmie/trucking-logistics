@@ -24,7 +24,8 @@ class FakeDecider:
         self.answers = list(answers)
         self.calls = []
 
-    async def ainvoke(self, messages):
+    async def ainvoke(self, messages, config=None):
+        # config: the tracing RunnableConfig decide_structured passes through.
         self.calls.append(list(messages))
         return self.answers.pop(0)
 

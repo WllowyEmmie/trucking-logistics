@@ -10,3 +10,5 @@ class CopilotContext:
     thread_id: str
     dispatcher_name: str
     timezone: str = "Africa/Lagos"
+    # Who owns the files this run makes (reports): only they can download them.
+    dispatcher_id: str = ""

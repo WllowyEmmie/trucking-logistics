@@ -61,6 +61,12 @@ type Config struct {
 	// PUBLIC_SITE_URL: the website's address, where Paystack sends the
 	// customer back after paying. Defaults to the first CORS_ORIGINS entry.
 	PublicSiteURL string
+	// METRICS_TOKEN: GET /metrics needs "Authorization: Bearer <it>". Empty:
+	// only a signed-in dispatcher or the agent's key can read them.
+	MetricsToken string
+	// SLOW_QUERY_MS: queries at least this slow are logged and counted
+	// (default 250; 0 turns it off).
+	SlowQuery time.Duration
 	// How long a sign-in lasts.
 	DispatcherSessionTTL time.Duration
 	DriverSessionTTL     time.Duration
@@ -97,12 +103,18 @@ func Load(logger *slog.Logger) (*Config, error) {
 	cfg.AllowDispatchShiftStart = env("ALLOW_DISPATCH_SHIFT_START", "false") == "true"
 	cfg.AgentInternalURL = os.Getenv("AGENT_INTERNAL_URL")
 	cfg.PaystackSecretKey = os.Getenv("PAYSTACK_SECRET_KEY")
+	cfg.MetricsToken = os.Getenv("METRICS_TOKEN")
 	cfg.PaystackURL = strings.TrimRight(env("PAYSTACK_URL", "https://api.paystack.co"), "/")
 	cfg.PublicSiteURL = strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/")
 	if cfg.PublicSiteURL == "" && len(cfg.AllowedOrigins) > 0 {
 		cfg.PublicSiteURL = strings.TrimRight(cfg.AllowedOrigins[0], "/")
 	}
 	var err error
+	slowMS, err := envInt("SLOW_QUERY_MS", 250)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SlowQuery = time.Duration(slowMS) * time.Millisecond
 	if cfg.DispatcherSessionTTL, err = envDuration("DISPATCHER_SESSION_TTL", 12*time.Hour); err != nil {
 		return nil, err
 	}

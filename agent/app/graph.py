@@ -13,6 +13,7 @@ from typing_extensions import TypedDict
 from .prompts import ASK, PROPOSE, SUPERVISE
 from .schema import TickOutput
 from .structured import decide_structured
+from .tracing import run_config
 from .tools import OPERATOR_TOOLS
 
 log = logging.getLogger(__name__)
@@ -91,7 +92,10 @@ def build_supervisor_decider(llm):
     the nearest-truck rule for everything."""
 
     async def decide(table: str) -> list[tuple[str, str, str]]:
-        out = await decide_structured(llm, TickOutput, SUPERVISE, [HumanMessage(table)], "supervisor")
+        out = await decide_structured(
+            llm, TickOutput, SUPERVISE, [HumanMessage(table)], "supervisor",
+            config=run_config("supervisor", SUPERVISE.version),
+        )
         return [(p.delivery, p.truck, p.why) for p in out.proposals]
 
     return decide

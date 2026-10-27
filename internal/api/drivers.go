@@ -108,15 +108,26 @@ func (s *Server) createDriver(w http.ResponseWriter, r *http.Request) {
 		}{driver, pin})
 		return
 	}
-	if body.PIN != "" {
-		hash, err := auth.HashSecret(body.PIN)
-		if err == nil {
+	// No PIN given: the default, which they must change at first sign-in (pin.go).
+	pin, mustChange := body.PIN, false
+	if pin == "" {
+		pin, mustChange = defaultDriverPIN, true
+	}
+	hash, err := auth.HashSecret(pin)
+	if err == nil {
+		if mustChange {
+			_, err = s.queries.SetDefaultDriverPIN(r.Context(), driver.ID, hash)
+		} else {
 			_, err = s.queries.SetDriverPIN(r.Context(), driver.ID, hash)
 		}
-		if err != nil {
-			s.respondErr(w, err, "set pin", "driver added, but the PIN wasn't set")
-			return
-		}
 	}
-	writeJSON(w, http.StatusCreated, driver)
+	if err != nil {
+		s.respondErr(w, err, "set pin", "driver added, but the PIN wasn't set")
+		return
+	}
+	writeJSON(w, http.StatusCreated, struct {
+		db.Driver
+		// Signs in with 1234 the first time, then chooses their own.
+		DefaultPIN bool `json:"default_pin"`
+	}{driver, mustChange})
 }

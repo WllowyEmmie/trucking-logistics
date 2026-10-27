@@ -62,7 +62,9 @@ func (t *ticketStore) take(tok string, now time.Time) (*principal, bool) {
 	return &e.p, true
 }
 
-// wsTicket is GET /ws/ticket (dispatchers): a one-minute pass for /ws.
+// wsTicket is GET /ws/ticket (dispatchers, drivers): a one-minute pass for
+// /ws or /ws/driver. The pass carries who asked, so a driver's opens only
+// /ws/driver.
 func (s *Server) wsTicket(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
 	tok, err := s.tickets.issue(*p, time.Now())

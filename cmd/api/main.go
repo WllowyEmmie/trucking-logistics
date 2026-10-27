@@ -12,6 +12,7 @@ import (
 
 	"github.com/WllowyEmmie/trucking-logistics/internal/api"
 	"github.com/WllowyEmmie/trucking-logistics/internal/config"
+	"github.com/WllowyEmmie/trucking-logistics/internal/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -30,8 +31,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
-
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("parse DATABASE_URL", "err", err)
+		os.Exit(1)
+	}
+	// Every query is timed for /metrics; slow ones are logged (SLOW_QUERY_MS).
+	poolCfg.ConnConfig.Tracer = &metrics.QueryTracer{Reg: metrics.Default, Logger: logger, Slow: cfg.SlowQuery}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		logger.Error("create pool", "err", err)
 		os.Exit(1)

@@ -11,6 +11,7 @@ import time
 from typing import TypeVar
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel
 
 from .prompts import Prompt
@@ -24,13 +25,16 @@ class StructuredOutputError(Exception):
     """The model's answer didn't fit the schema, twice."""
 
 
-async def decide_structured(llm, schema: type[T], prompt: Prompt, messages: list[BaseMessage], label: str) -> T:
+async def decide_structured(
+    llm, schema: type[T], prompt: Prompt, messages: list[BaseMessage], label: str,
+    config: RunnableConfig | None = None,
+) -> T:
     decider = llm.with_structured_output(schema, include_raw=True)
     convo: list[BaseMessage] = [SystemMessage(prompt.text), *messages]
     problem = ""
     for attempt in (1, 2):
         started = time.monotonic()
-        out = await decider.ainvoke(convo)
+        out = await decider.ainvoke(convo, config=config)
         raw = out.get("raw")
         u = getattr(raw, "usage_metadata", None) or {}
         log.info(
