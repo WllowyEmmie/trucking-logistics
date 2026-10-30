@@ -391,7 +391,8 @@ func (s *Server) driverLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	phone := auth.NormPhone(body.Phone)
+	// The same form drivers are saved in, so 0803… and +234803… both match.
+	phone := auth.CanonicalPhone(body.Phone, s.st().Country)
 	acct := "p:" + phone
 	if s.loginsBlocked(acct) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed sign-ins; try again in 15 minutes or call dispatch"})

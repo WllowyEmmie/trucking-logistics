@@ -63,8 +63,9 @@ func (s *Server) createDriver(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	// Stored as digits with a leading +, the form sign-in matches on.
-	body.Phone = auth.NormPhone(body.Phone)
+	// Stored in international form (+234…), the form sign-in matches on: a
+	// local 0803… is read as a number in the operator's country.
+	body.Phone = auth.CanonicalPhone(body.Phone, s.st().Country)
 	if body.Phone == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone number is required"})
 		return
